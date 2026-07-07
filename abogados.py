@@ -281,7 +281,7 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
             titulos_basura = ['CÓDIGO', 'CODIGO', 'PRODUCTOR', 'NOMBRE', 'PRODUCTOR_COD', 'SIN CÓDIGO']
             df_consolidado_prod = df_consolidado_prod[~df_consolidado_prod['Código'].isin(titulos_basura)]
             
-            # Ordenamiento mandatorio por Incidencia (mayor a menor)
+            # Ordenamiento mandatorio por Incidencia (mayor a menor) para la tabla de visualización
             df_consolidado_prod = df_consolidado_prod.sort_values(by='INCIDENCIA', ascending=False).reset_index(drop=True)
             df_mostrar_tabla_p = df_consolidado_prod.drop(columns=['INCIDENCIA'])
 
@@ -364,8 +364,9 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
                 st.info("💡 Consejo: Haga clic en cualquier celda o fila de la tabla superior para inspeccionar el desglose de juicios, mediaciones y pólizas vigentes.")
             
             # --- GRÁFICO TOP 25 PRODUCTORES ---
-            st.markdown("<h3 class='section-header'>📊 Top 25 Productores con Mayor Volumen</h3>", unsafe_allow_html=True)
-            df_top25_prod = df_consolidado_prod.head(25).copy()
+            st.markdown("<h3 class='section-header'>📊 Top 25 Productores con Mayor Volumen de Casos</h3>", unsafe_allow_html=True)
+            # Modificación: Forzamos el ordenamiento del gráfico de forma independiente por cantidad de volumen absoluto (Total General)
+            df_top25_prod = df_consolidado_prod.sort_values(by='Total General', ascending=False).head(25).copy()
             if not df_top25_prod.empty:
                 df_top25_prod['Productor Identificador'] = "[" + df_top25_prod['Código'] + "] " + df_top25_prod['Nombre Productor']
                 df_chart_prod = df_top25_prod.melt(id_vars=['Productor Identificador'], value_vars=['Mediaciones', 'Juicios'], var_name='Tipo Expediente', value_name='Cantidad')
