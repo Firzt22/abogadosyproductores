@@ -74,8 +74,10 @@ if not st.session_state['autenticado']:
 # PÁGINA PRINCIPAL (SISTEMA LOGUEADO)
 # -------------------------------------------------------------------------
 
-# Carga del logo de ATM en la barra lateral desde el repositorio local/nube
-if os.path.exists("atmlogo.png"):
+# Carga del logo contemplando la extensión duplicada detectada en el repositorio
+if os.path.exists("atmlogo.png.png"):
+    st.sidebar.image("atmlogo.png.png", use_container_width=True)
+elif os.path.exists("atmlogo.png"):
     st.sidebar.image("atmlogo.png", use_container_width=True)
 else:
     st.sidebar.markdown("<h2 style='color: #8B1D41; font-weight: bold; text-align: center;'>ATM SEGUROS</h2>", unsafe_allow_html=True)
