@@ -74,14 +74,9 @@ if not st.session_state['autenticado']:
 # PÁGINA PRINCIPAL (SISTEMA LOGUEADO)
 # -------------------------------------------------------------------------
 
-# Carga del logo de ATM en la barra lateral desde el Escritorio
-ruta_escritorio_1 = os.path.expanduser(r"~\Desktop\atmlogo.png")
-ruta_escritorio_2 = os.path.expanduser(r"~\Escritorio\atmlogo.png")
-
-if os.path.exists(ruta_escritorio_1):
-    st.sidebar.image(ruta_escritorio_1, use_container_width=True)
-elif os.path.exists(ruta_escritorio_2):
-    st.sidebar.image(ruta_escritorio_2, use_container_width=True)
+# Carga del logo de ATM en la barra lateral desde el repositorio local/nube
+if os.path.exists("atmlogo.png"):
+    st.sidebar.image("atmlogo.png", use_container_width=True)
 else:
     st.sidebar.markdown("<h2 style='color: #8B1D41; font-weight: bold; text-align: center;'>ATM SEGUROS</h2>", unsafe_allow_html=True)
 
@@ -129,8 +124,6 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         conteo_vigentes = df_v_prod['Código'].value_counts().reset_index()
         conteo_vigentes.columns = ['Código', 'Vigentes']
 
-        # Intento de rescatar nombres desde el maestro de Vigentes si tuviera columna de nombre (ej: Columna C si existiera)
-        # Por ahora mapeamos de la misma forma estructurada de Juicios y Mediaciones
         # -------------------------------------------------------------------------
         # CREACIÓN DE MAPAS DE PRODUCTORES
         # -------------------------------------------------------------------------
@@ -344,7 +337,7 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
                     df_detalle_prod_final = pd.concat([df_det_prod_m, df_det_prod_j], ignore_index=True)
                     st.dataframe(df_detalle_prod_final, use_container_width=True, hide_index=True)
                 
-                # --- SUB-SOLAPA B: VIGENTES (SÓLO MÉTRICAS - REMOVIDA TABLA DE DETALLE) ---
+                # --- SUB-SOLAPA B: VIGENTES (SÓLO MÉTRICAS) ---
                 with sub_tab_vigentes:
                     st.markdown("#### 🔍 Resumen Cuantitativo de Pólizas Activas")
                     
