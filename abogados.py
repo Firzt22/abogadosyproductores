@@ -84,8 +84,6 @@ elif os.path.exists("atmlogo.png"):
 else:
     st.sidebar.markdown("<h2 style='color: #8B1D41; font-weight: bold; text-align: center;'>ATM SEGUROS</h2>", unsafe_allow_html=True)
 
-st.markdown("<h1 class='main-title'>🏛️ Panel de Gestión - Mediaciones & Juicios</h1>", unsafe_allow_html=True)
-
 st.sidebar.markdown("### 📁 Carga de Información")
 
 file_mediaciones = st.sidebar.file_uploader("1. Archivo de Mediaciones", type=["xlsx", "csv"], key="uploader_m")
@@ -117,44 +115,43 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         df_r_raw = leer_archivo(file_responsables)
         
         # -------------------------------------------------------------------------
-        # PROCESAMIENTO CORREGIDO DEL EXCEL DE RESPONSABLES INTERNOS
+        # PROCESAMIENTO CORREGIDO Y ROBUSTO DEL EXCEL DE RESPONSABLES INTERNOS
         # -------------------------------------------------------------------------
         map_resp_prod = {}
         map_resp_org = {}
         map_resp_master = {}
         
+        ultimo_responsable_visto = "🚫 NO ASIGNADO EN EXCEL DE RESPONSABLES"
+
         for idx, row in df_r_raw.iterrows():
-            # Extraer y limpiar valores de las columnas G(6) y H(7) para esta fila
+            # Intentar capturar responsable de la fila actual si existe
             cod_resp = str(row[6]).strip() if pd.notna(row[6]) else ""
             nom_resp = str(row[7]).strip().upper() if pd.notna(row[7]) else ""
             
-            # Quitar decimales automáticos de códigos numéricos si los hubiera
             if cod_resp.endswith('.0'):
                 cod_resp = cod_resp[:-2]
                 
-            # Validamos que sea un responsable real y no cabeceras o datos genéricos erróneos
+            # Si hay datos de responsable válidos en esta fila, actualizamos el "puntero de bloque"
             if cod_resp != "" and nom_resp != "" and not any(x in cod_resp.upper() for x in ["RESPONSABLE", "CÓDIGO", "CODIGO"]):
-                # Filtro específico para evitar capturar filas de totales o índices falsos como [1] GENERAL
-                if cod_resp not in ["1", "0"]: 
-                    txt_responsable = f"[{cod_resp}] {nom_resp}"
+                ultimo_responsable_visto = f"[{cod_resp}] {nom_resp}"
+            
+            # Asignación para Productores (Columna A/0)
+            if pd.notna(row[0]):
+                c_prod = normalizar_codigo(row[0])
+                if c_prod not in ["CÓDIGO", "CODIGO", "SIN CÓDIGO", "PRODUCTOR", "NOMBRE"]:
+                    map_resp_prod[c_prod] = ultimo_responsable_visto
                     
-                    # Mapeo por Productor: Si hay un código válido en Columna A(0)
-                    if pd.notna(row[0]):
-                        c_prod = normalizar_codigo(row[0])
-                        if c_prod not in ["CÓDIGO", "CODIGO", "SIN CÓDIGO", "PRODUCTOR"]:
-                            map_resp_prod[c_prod] = txt_responsable
-                            
-                    # Mapeo por Organizador: Si hay un código válido en Columna C(2)
-                    if pd.notna(row[2]):
-                        c_org = normalizar_codigo(row[2])
-                        if c_org not in ["CÓDIGO", "CODIGO", "SIN CÓDIGO", "ORGANIZADOR"]:
-                            map_resp_org[c_org] = txt_responsable
-                            
-                    # Mapeo por Master: Si hay un código válido en Columna E(4)
-                    if pd.notna(row[4]):
-                        c_master = normalizar_codigo(row[4])
-                        if c_master not in ["CÓDIGO", "CODIGO", "SIN CÓDIGO", "MASTER"]:
-                            map_resp_master[c_master] = txt_responsable
+            # Asignación para Organizadores (Columna C/2)
+            if pd.notna(row[2]):
+                c_org = normalizar_codigo(row[2])
+                if c_org not in ["CÓDIGO", "CODIGO", "SIN CÓDIGO", "ORGANIZADOR", "NOMBRE"]:
+                    map_resp_org[c_org] = ultimo_responsable_visto
+                    
+            # Asignación para Masters (Columna E/4)
+            if pd.notna(row[4]):
+                c_master = normalizar_codigo(row[4])
+                if c_master not in ["CÓDIGO", "CODIGO", "SIN CÓDIGO", "MASTER", "NOMBRE"]:
+                    map_resp_master[c_master] = ultimo_responsable_visto
 
         # -------------------------------------------------------------------------
         # PROCESAMIENTO Y CRUCES BASADOS EN EL EXCEL DE VIGENTES
