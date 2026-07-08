@@ -139,16 +139,13 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         def buscar_nombre_organizador(cod):
             return map_org_nombres.get(str(cod).strip().upper(), "SIN ASIGNAR")
 
-        # 3. Conteo de Pólizas Vigentes Global por Productor
+        # Conteo de Pólizas Vigentes Global por Productor
         conteo_vigentes_prod = df_v_limpio['Prod_Codigo'].value_counts().reset_index()
         conteo_vigentes_prod.columns = ['Código', 'Vigentes']
 
-        # 4. Métricas de Pólizas Vigentes específicas por Organizador (Totales, Ramo 3 y Ramo 4)
+        # Métricas de Pólizas Vigentes específicas por Organizador (Totales, Ramo 3 y Ramo 4)
         df_v_orgs = df_v_limpio[~df_v_limpio['Org_Codigo'].isin(['CÓDIGO', 'CODIGO', 'ORGANIZADOR', 'SIN CÓDIGO'])].copy()
-        
         v_totales_org = df_v_orgs['Org_Codigo'].value_counts().to_dict()
-        v_ramo3_org = df_v_orgs[df_v_orgs['Ramo'] == "3"]['Org_Codigo'].value_counts().to_dict()
-        v_ramo4_org = df_v_orgs[df_v_orgs['Ramo'] == "4"]['Org_Codigo'].value_counts().to_dict()
 
         # -------------------------------------------------------------------------
         # CREACIÓN DE MAPAS DE PRODUCTORES (Cód -> Nombre)
@@ -170,6 +167,9 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
             if cod_str in map_j_prod: return map_j_prod[cod_str]
             if cod_str in map_m_prod: return map_m_prod[cod_str]
             return "SIN ASIGNAR"
+
+        # Relación inversa: Qué Productores pertenecen a cada Organizador para el listado final
+        df_rel_org_prod = df_v_limpio[~df_v_limpio['Org_Codigo'].isin(['CÓDIGO', 'CODIGO', 'ORGANIZADOR', 'SIN CÓDIGO'])][['Org_Codigo', 'Prod_Codigo']].drop_duplicates()
 
         # -------------------------------------------------------------------------
         # PRE-PROCESAMIENTO DE CASOS POR PRODUCTOR Y ASIGNACIÓN DE ORGANIZADOR
@@ -197,7 +197,7 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         conteo_org_j.columns = ['Org_Codigo', 'Juicios']
 
         # -------------------------------------------------------------------------
-        # SOLAPAS PRINCIPALES (Añadimos la pestaña Organizador)
+        # SOLAPAS PRINCIPALES
         # -------------------------------------------------------------------------
         tabs = st.tabs(["⚖️ Abogados", "💼 Productor", "🏢 Organizador", "🔍 Coincidencias"])
         
@@ -265,25 +265,16 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
             else:
                 st.info("💡 Consejo: Haga clic en cualquier celda o fila de la tabla superior para inspeccionar el desglose de juicios y mediaciones.")
             
-            # --- GRÁFICO TOP 25 ABOGADOS ---
             st.markdown("<h3 class='section-header'>📊 Top 25 Abogados con Mayor Volumen</h3>", unsafe_allow_html=True)
             df_top25_ab = df_consolidado_ab.head(25).copy()
             if not df_top25_ab.empty:
                 df_chart_ab = df_top25_ab.melt(id_vars=['Abogado'], value_vars=['Mediaciones', 'Juicios'], var_name='Tipo Expediente', value_name='Cantidad')
                 fig_ab = px.bar(
-                    df_chart_ab, 
-                    x='Abogado', 
-                    y='Cantidad', 
-                    color='Tipo Expediente',
-                    color_discrete_map={'Mediaciones': '#DCA7B8', 'Juicios': '#8B1D41'},
-                    barmode='stack',
+                    df_chart_ab, x='Abogado', y='Cantidad', color='Tipo Expediente',
+                    color_discrete_map={'Mediaciones': '#DCA7B8', 'Juicios': '#8B1D41'}, barmode='stack',
                     labels={'Cantidad': 'Cantidad de Casos', 'Abogado': 'Profesional'}
                 )
-                fig_ab.update_layout(
-                    xaxis={'categoryorder':'total descending'},
-                    margin=dict(l=20, r=20, t=10, b=40),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-                )
+                fig_ab.update_layout(xaxis={'categoryorder':'total descending'}, margin=dict(l=20, r=20, t=10, b=40), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                 st.plotly_chart(fig_ab, use_container_width=True)
 
         # =========================================================================
@@ -318,12 +309,7 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
             df_mostrar_tabla_p = df_consolidado_prod.drop(columns=['INCIDENCIA'])
 
             busqueda_prod = st.text_input("🔍 Buscar productor (por Código o por Nombre):", placeholder="Escriba el código numérico o el nombre del productor...", key="input_bus_prod")
-            if busqueda_prod:
-                b_upper = busqueda_prod.strip().upper()
-                condicion = df_mostrar_tabla_p['Código'].str.contains(b_upper, na=False) | df_mostrar_tabla_p['Nombre Productor'].str.contains(b_upper, na=False)
-                df_filtrada_prod = df_mostrar_tabla_p[condicion].reset_index(drop=True)
-            else:
-                df_filtrada_prod = df_mostrar_tabla_p
+            df_filtrada_prod = df_mostrar_tabla_p[df_mostrar_tabla_p['Código'].str.contains(busqueda_prod.strip().upper(), na=False) | df_mostrar_tabla_p['Nombre Productor'].str.contains(busqueda_prod.strip().upper(), na=False)].reset_index(drop=True) if busqueda_prod else df_mostrar_tabla_p
 
             st.write("Seleccione un productor de la lista para desplegar el análisis comercial abajo:")
             evento_seleccion_prod = st.dataframe(df_filtrada_prod, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="tabla_productores")
@@ -401,104 +387,119 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
                 st.plotly_chart(fig_prod, use_container_width=True)
 
         # =========================================================================
-        # --- SOLAPA 3: ORGANIZADOR (¡NUEVA SOLAPA SOLICITADA!) ---
+        # --- SOLAPA 3: ORGANIZADOR (¡TABLA IDÉNTICA EN ESPEJO + MEJORAS!) ---
         # =========================================================================
         with tabs[2]:
             st.markdown("<h3 class='section-header'>🏢 Resumen de Carga por Estructura Organizadora</h3>", unsafe_allow_html=True)
             
-            # Consolidamos los juicios y mediaciones agrupados por código de organizador
+            # Consolidación estructurada por Código de Organizador
             df_consolidado_org = pd.merge(conteo_org_m, conteo_org_j, on='Org_Codigo', how='outer').fillna(0)
             df_consolidado_org['Mediaciones'] = df_consolidado_org['Mediaciones'].astype(int)
             df_consolidado_org['Juicios'] = df_consolidado_org['Juicios'].astype(int)
             df_consolidado_org['Total General'] = df_consolidado_org['Mediaciones'] + df_consolidado_org['Juicios']
             
-            # Traemos el nombre del Organizador
             df_consolidado_org['Nombre Organizador'] = df_consolidado_org['Org_Codigo'].apply(buscar_nombre_organizador)
+            df_consolidado_org['Vigentes'] = df_consolidado_org['Org_Codigo'].map(v_totales_org).fillna(0).astype(int)
             
-            # Mapeamos las pólizas vigentes específicas calculadas al inicio
-            df_consolidado_org['Vigentes Automotor (Ramo 3)'] = df_consolidado_org['Org_Codigo'].map(v_ramo3_org).fillna(0).astype(int)
-            df_consolidado_org['Vigentes Motovehículo (Ramo 4)'] = df_consolidado_org['Org_Codigo'].map(v_ramo4_org).fillna(0).astype(int)
-            df_consolidado_org['Vigentes Totales'] = df_consolidado_org['Org_Codigo'].map(v_totales_org).fillna(0).astype(int)
-            
-            # Cálculo de la incidencia del Organizador
+            # Cálculo exacto de incidencia en base al total de vigentes del organizador
             def calcular_incidencia_org(row):
-                if row['Vigentes Totales'] > 0:
-                    return round((row['Total General'] / row['Vigentes Totales']) * 100, 2)
+                if row['Vigentes'] > 0:
+                    return round((row['Total General'] / row['Vigentes']) * 100, 2)
                 else:
                     return 100.0 if row['Total General'] > 0 else 0.0
 
             df_consolidado_org['INCIDENCIA'] = df_consolidado_org.apply(calcular_incidencia_org, axis=1)
             df_consolidado_org['INCIDENCIA (%)'] = df_consolidado_org['INCIDENCIA'].apply(lambda x: f"{x}%")
             
-            # Ordenamos y estructuramos las columnas igual que en Productores
-            df_consolidado_org = df_consolidado_org[['Org_Codigo', 'Nombre Organizador', 'Vigentes Totales', 'Vigentes Automotor (Ramo 3)', 'Vigentes Motovehículo (Ramo 4)', 'INCIDENCIA (%)', 'Mediaciones', 'Juicios', 'Total General', 'INCIDENCIA']]
+            # Formato idéntico al de productores: Código, Nombre, Vigentes, Incidencia, Med, Juicios, Total
+            df_consolidado_org = df_consolidado_org[['Org_Codigo', 'Nombre Organizador', 'Vigentes', 'INCIDENCIA (%)', 'Mediaciones', 'Juicios', 'Total General', 'INCIDENCIA']]
+            df_consolidado_org.columns = ['Código', 'Nombre Organizador', 'Vigentes', 'INCIDENCIA (%)', 'Mediaciones', 'Juicios', 'Total General', 'INCIDENCIA']
             
-            # Filtros de limpieza de encabezados basura
             titulos_basura_org = ['CÓDIGO', 'CODIGO', 'ORGANIZADOR', 'SIN CÓDIGO', 'SIN ORGANIZADOR', 'SIN ASIGNAR']
-            df_consolidado_org = df_consolidado_org[~df_consolidado_org['Org_Codigo'].isin(titulos_basura_org)]
+            df_consolidado_org = df_consolidado_org[~df_consolidado_org['Código'].isin(titulos_basura_org)]
             
-            # Ordenamiento mandatorio por Incidencia (mayor a menor)
+            # Ordenamiento mandatorio por nivel de conflicto (%)
             df_consolidado_org = df_consolidado_org.sort_values(by='INCIDENCIA', ascending=False).reset_index(drop=True)
             df_mostrar_tabla_o = df_consolidado_org.drop(columns=['INCIDENCIA'])
             
             busqueda_org = st.text_input("🔍 Buscar Organizador (por Código o Nombre):", placeholder="Escriba el código o nombre de la estructura...", key="input_bus_org")
-            if busqueda_org:
-                bo_upper = busqueda_org.strip().upper()
-                condicion_o = df_mostrar_tabla_o['Org_Codigo'].str.contains(bo_upper, na=False) | df_mostrar_tabla_o['Nombre Organizador'].str.contains(bo_upper, na=False)
-                df_filtrada_org = df_mostrar_tabla_o[condicion_o].reset_index(drop=True)
-            else:
-                df_filtrada_org = df_mostrar_tabla_o
+            df_filtrada_org = df_mostrar_tabla_o[df_mostrar_tabla_o['Código'].str.contains(busqueda_org.strip().upper(), na=False) | df_mostrar_tabla_o['Nombre Organizador'].str.contains(busqueda_org.strip().upper(), na=False)].reset_index(drop=True) if busqueda_org else df_mostrar_tabla_o
 
-            st.write("Seleccione un organizador de la lista para auditar el historial integrado abajo:")
+            st.write("Seleccione un organizador de la lista para desplegar el análisis corporativo abajo:")
             evento_seleccion_org = st.dataframe(df_filtrada_org, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="tabla_organizadores")
             
             filas_seleccionadas_org = evento_seleccion_org.get("selection", {}).get("rows", [])
             if filas_seleccionadas_org:
                 indice_fila_org = filas_seleccionadas_org[0]
-                org_cod_sel = df_filtrada_org.iloc[indice_fila_org]['Org_Codigo']
+                org_cod_sel = df_filtrada_org.iloc[indice_fila_org]['Código']
                 org_nom_sel = df_filtrada_org.iloc[indice_fila_org]['Nombre Organizador']
                 
-                st.markdown(f"<h3 class='section-header'>📂 Desglose de Siniestros Vinculados al Organizador: [{org_cod_sel}] {org_nom_sel}</h3>", unsafe_allow_html=True)
+                st.markdown(f"<h3 class='section-header'>📂 Análisis Integrado de Estructura: [{org_cod_sel}] {org_nom_sel}</h3>", unsafe_allow_html=True)
                 
-                # Traer expedientes de todos los productores asociados a este Organizador
-                df_m_temp_o = df_m_raw.copy()
-                df_m_temp_o[11] = df_m_temp_o[11].apply(normalizar_codigo)
-                df_m_temp_o['Org_Codigo'] = df_m_temp_o[11].map(map_prod_org).fillna("SIN ORGANIZADOR")
-                df_det_org_m = df_m_temp_o[df_m_temp_o['Org_Codigo'] == org_cod_sel].iloc[:, [2, 3, 4, 5]].copy()
-                df_det_org_m.columns = ['SINIESTRO', 'CARATULA', 'FECHA DE SINIESTRO', 'DETALLE EXPEDIENTE']
-                df_det_org_m['TIPO'] = 'M'
+                # REQUISITO NUEVO: Listar qué productores están agrupados bajo este organizador
+                df_prod_asociados = df_rel_org_prod[df_rel_org_prod['Org_Codigo'] == org_cod_sel].copy()
+                df_prod_asociados['Nombre Productor'] = df_prod_asociados['Prod_Codigo'].apply(buscar_nombre_productor)
+                df_prod_asociados.columns = ['Código Organizador', 'Código Productor Agrupado', 'Nombre del Productor']
                 
-                siniestros_m_org_str = df_det_org_m['SINIESTRO'].fillna("").astype(str).str.strip()
-                m_auto_o = df_det_org_m[siniestros_m_org_str.str.startswith("03/")].shape[0]
-                m_moto_o = df_det_org_m[~siniestros_m_org_str.str.startswith("03/")].shape[0]
+                with st.expander("🤝 Ver Carteras y Productores Vinculados a este Organizador", expanded=False):
+                    st.dataframe(df_prod_asociados[['Código Productor Agrupado', 'Nombre del Productor']], use_container_width=True, hide_index=True)
 
-                df_j_temp_o = df_j_raw.copy()
-                df_j_temp_o[14] = df_j_temp_o[14].apply(normalizar_codigo)
-                df_j_temp_o['Org_Codigo'] = df_j_temp_o[14].map(map_prod_org).fillna("SIN ORGANIZADOR")
-                df_det_org_j = df_j_temp_o[df_j_temp_o['Org_Codigo'] == org_cod_sel].iloc[:, [2, 3, 5, 6]].copy()
-                df_det_org_j.columns = ['SINIESTRO', 'CARATULA', 'FECHA DE SINIESTRO', 'DETALLE EXPEDIENTE']
-                df_det_org_j['TIPO'] = 'J'
+                # Estructura de Sub-solapas idéntica a la de Productor
+                sub_tab_expedientes_o, sub_tab_vigentes_o = st.tabs(["📋 Historial de Expedientes", "🚗 Detalle de Pólizas Vigentes"])
                 
-                siniestros_j_org_str = df_det_org_j['SINIESTRO'].fillna("").astype(str).str.strip()
-                j_auto_o = df_det_org_j[siniestros_j_org_str.str.startswith("03/")].shape[0]
-                j_moto_o = df_det_org_j[~siniestros_j_org_str.str.startswith("03/")].shape[0]
+                with sub_tab_expedientes_o:
+                    df_m_temp_o = df_m_raw.copy()
+                    df_m_temp_o[11] = df_m_temp_o[11].apply(normalizar_codigo)
+                    df_m_temp_o['Org_Codigo'] = df_m_temp_o[11].map(map_prod_org).fillna("SIN ORGANIZADOR")
+                    df_det_org_m = df_m_temp_o[df_m_temp_o['Org_Codigo'] == org_cod_sel].iloc[:, [2, 3, 4, 5]].copy()
+                    df_det_org_m.columns = ['SINIESTRO', 'CARATULA', 'FECHA DE SINIESTRO', 'DETALLE EXPEDIENTE']
+                    df_det_org_m['TIPO'] = 'M'
+                    
+                    siniestros_m_org_str = df_det_org_m['SINIESTRO'].fillna("").astype(str).str.strip()
+                    m_auto_o = df_det_org_m[siniestros_m_org_str.str.startswith("03/")].shape[0]
+                    m_moto_o = df_det_org_m[~siniestros_m_org_str.str.startswith("03/")].shape[0]
 
-                co1, co2, co3, co4 = st.columns(4)
-                co1.metric(label="🚗 Total Mediaciones Automotor", value=m_auto_o)
-                co2.metric(label="🏍️ Total Mediaciones Motovehículo", value=m_moto_o)
-                co3.metric(label="🚗 Total Juicios Automotor", value=j_auto_o)
-                co4.metric(label="🏍️ Total Juicios Motovehículo", value=j_moto_o)
+                    df_j_temp_o = df_j_raw.copy()
+                    df_j_temp_o[14] = df_j_temp_o[14].apply(normalizar_codigo)
+                    df_j_temp_o['Org_Codigo'] = df_j_temp_o[14].map(map_prod_org).fillna("SIN ORGANIZADOR")
+                    df_det_org_j = df_j_temp_o[df_j_temp_o['Org_Codigo'] == org_cod_sel].iloc[:, [2, 3, 5, 6]].copy()
+                    df_det_org_j.columns = ['SINIESTRO', 'CARATULA', 'FECHA DE SINIESTRO', 'DETALLE EXPEDIENTE']
+                    df_det_org_j['TIPO'] = 'J'
+                    
+                    siniestros_j_org_str = df_det_org_j['SINIESTRO'].fillna("").astype(str).str.strip()
+                    j_auto_o = df_det_org_j[siniestros_j_org_str.str.startswith("03/")].shape[0]
+                    j_moto_o = df_det_org_j[~siniestros_j_org_str.str.startswith("03/")].shape[0]
+
+                    co1, co2, co3, co4 = st.columns(4)
+                    co1.metric(label="🚗 Mediaciones Automotor (03/)", value=m_auto_o)
+                    co2.metric(label="🏍️ Mediaciones Motovehículo", value=m_moto_o)
+                    co3.metric(label="🚗 Juicios Automotor (03/)", value=j_auto_o)
+                    co4.metric(label="🏍️ Juicios Motovehículo", value=j_moto_o)
+                    
+                    df_detalle_org_final = pd.concat([df_det_org_m, df_det_org_j], ignore_index=True)
+                    st.dataframe(df_detalle_org_final, use_container_width=True, hide_index=True)
                 
-                df_detalle_org_final = pd.concat([df_det_org_m, df_det_org_j], ignore_index=True)
-                st.dataframe(df_detalle_org_final, use_container_width=True, hide_index=True)
+                with sub_tab_vigentes_o:
+                    st.markdown("#### 🔍 Resumen Cuantitativo de Pólizas Activas del Organizador")
+                    df_v_filtrado_org = df_v_limpio[df_v_limpio['Org_Codigo'] == org_cod_sel]
+                    
+                    ramos_series_o = df_v_filtrado_org['Ramo'].fillna("").astype(str).str.strip()
+                    v_auto_o = df_v_filtrado_org[ramos_series_o == "3"].shape[0]
+                    v_moto_o = df_v_filtrado_org[ramos_series_o == "4"].shape[0]
+                    v_otros_o = df_v_filtrado_org[~ramos_series_o.isin(["3", "4"])].shape[0]
+                    
+                    cvo1, cvo2, cvo3 = st.columns(3)
+                    cvo1.metric(label="🚗 Vigentes Automotores (Ramo 3)", value=v_auto_o)
+                    cvo2.metric(label="🏍️ Vigentes Motovehículos (Ramo 4)", value=v_moto_o)
+                    cvo3.metric(label="📊 Vigentes Otros Ramos", value=v_otros_o)
             else:
-                st.info("💡 Consejo: Haga clic en cualquier fila de organizador para auditar sus métricas de siniestros agrupados.")
+                st.info("💡 Consejo: Haga clic en cualquier fila de organizador para auditar sus sub-módulos dinámicos.")
 
             # --- GRÁFICO TOP 25 ORGANIZADORES ---
             st.markdown("<h3 class='section-header'>📊 Top 25 Organizadores con Mayor Volumen de Casos</h3>", unsafe_allow_html=True)
             df_top25_org = df_consolidado_org.sort_values(by='Total General', ascending=False).head(25).copy()
             if not df_top25_org.empty:
-                df_top25_org['Org Identificador'] = "[" + df_top25_org['Org_Codigo'] + "] " + df_top25_org['Nombre Organizador']
+                df_top25_org['Org Identificador'] = "[" + df_top25_org['Código'] + "] " + df_top25_org['Nombre Organizador']
                 df_chart_org = df_top25_org.melt(id_vars=['Org Identificador'], value_vars=['Mediaciones', 'Juicios'], var_name='Tipo Expediente', value_name='Cantidad')
                 fig_org = px.bar(
                     df_chart_org, x='Org Identificador', y='Cantidad', color='Tipo Expediente',
@@ -540,7 +541,11 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
             df_coinc_total = df_coinc_total.sort_values(by='Total Coincidencias', ascending=False).reset_index(drop=True)
             
             busqueda_c = st.text_input("🔍 Buscador de Coincidencias:", placeholder="Busque por Código, Productor o Abogado...", key="input_coinc")
-            df_mostrar_coinc = df_coinc_total[df_coinc_total['Código Productor'].str.contains(busqueda_c.strip().upper(), na=False) | df_coinc_total['Nombre Productor'].str.contains(bc_upper, na=False) | df_coinc_total['Abogado'].str.contains(bc_upper, na=False)] if busqueda_c else df_coinc_total
+            if busqueda_c:
+                bc_upper = busqueda_c.strip().upper()
+                df_mostrar_coinc = df_coinc_total[df_coinc_total['Código Productor'].str.contains(bc_upper, na=False) | df_coinc_total['Nombre Productor'].str.contains(bc_upper, na=False) | df_coinc_total['Abogado'].str.contains(bc_upper, na=False)]
+            else:
+                df_mostrar_coinc = df_coinc_total
                 
             st.write("Seleccione una fila para desplegar la cartera compartida abajo:")
             evento_seleccion_coinc = st.dataframe(df_mostrar_coinc, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="tabla_coincidencias")
@@ -579,4 +584,4 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         st.error(f"Ocurrió un error inesperado al procesar los archivos: {e}")
 
 else:
-    st.info("👋 Bienvenido, mdondo. Por favor, cargue los tres archivos (Mediaciones, Juicios y VIGENTES) en el panel lateral para iniciar el análisis.")
+    st.info("👋 Bienvenido, mdondo. Por favor, cargue los tres archivos (Mediaciones, Juicios y VIGENTES) in el panel lateral para iniciar el análisis.")
