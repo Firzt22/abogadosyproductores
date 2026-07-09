@@ -82,6 +82,7 @@ if not st.session_state['autenticado']:
 # PÁGINA PRINCIPAL (SISTEMA LOGUEADO)
 # -------------------------------------------------------------------------
 
+# Carga del logo contemplando la extensión duplicada detectada en el repositorio
 if os.path.exists("atmlogo.png.png"):
     st.sidebar.image("atmlogo.png.png", use_container_width=True)
 elif os.path.exists("atmlogo.png"):
@@ -91,6 +92,7 @@ else:
 
 st.markdown("<h1 class='main-title'>🏛️ Panel de Gestión - Mediaciones & Juicios</h1>", unsafe_allow_html=True)
 
+# Barra lateral para la carga de datos estructurada
 st.sidebar.markdown("### 📁 Carga de Información")
 
 file_mediaciones = st.sidebar.file_uploader("Seleccione el archivo de Mediaciones", type=["xlsx", "csv"], key="uploader_m")
@@ -98,173 +100,183 @@ file_juicios = st.sidebar.file_uploader("Seleccione el archivo de Juicios", type
 file_vigentes = st.sidebar.file_uploader("Seleccione el archivo de VIGENTES", type=["xlsx", "csv"], key="uploader_v")
 file_responsables = st.sidebar.file_uploader("Seleccione el archivo de RESPONSABLES", type=["xlsx", "csv"], key="uploader_r")
 
+# Funciones auxiliares globales
+def normalizar_codigo(val):
+    if pd.isna(val):
+        return "SIN CÓDIGO"
+    val_str = str(val).strip()
+    if val_str.endswith('.0'):
+        val_str = val_str[:-2]
+    val_upper = val_str.upper()
+    return val_upper if val_upper != "" else "SIN CÓDIGO"
+
+@st.cache_data
+def leer_archivo(file_obj):
+    if file_obj.name.endswith('.csv'):
+        return pd.read_csv(file_obj, header=None)
+    else:
+        return pd.read_excel(file_obj, header=None)
+
+# -------------------------------------------------------------------------
+# FUNCIÓN MAESTRA DE PROCESAMIENTO (CON CACHÉ)
+# -------------------------------------------------------------------------
+@st.cache_data
+def procesar_tablero_completo(file_m_id, file_j_id, file_v_id, file_r_id, _file_m, _file_j, _file_v, _file_r):
+    # Carga inicial de dataframes puros
+    df_m_raw = leer_archivo(_file_m)
+    df_j_raw = leer_archivo(_file_j)
+    df_v_raw = leer_archivo(_file_v)
+    
+    map_resp_prod = {}
+    map_resp_org = {}
+    map_resp_master = {}
+    responsables_asignaciones = []
+    
+    if _file_r is not None:
+        df_r_raw = leer_archivo(_file_r)
+        
+        # --- PRODUCTOR ---
+        df_r_prod = df_r_raw[[0, 1, 6, 7]].dropna(subset=[0]).copy()
+        df_r_prod[0] = df_r_prod[0].apply(normalizar_codigo)
+        df_r_prod[6] = df_r_prod[6].apply(normalizar_codigo)
+        df_r_prod[7] = df_r_prod[7].fillna("").astype(str).str.strip().str.upper()
+        
+        df_r_prod['Resp_String'] = df_r_prod.apply(lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" else "SIN RESPONSABLE ASIGNADO", axis=1)
+        map_resp_prod = df_r_prod.groupby(0)['Resp_String'].apply(lambda x: " / ".join(x.unique())).to_dict()
+        
+        for _, fila in df_r_prod.iterrows():
+            if fila[7] != "" and fila[0] != "SIN CÓDIGO":
+                responsables_asignaciones.append({'Responsable': fila[7], 'Tipo': 'Productor', 'Código': fila[0]})
+        
+        # --- ORGANIZADOR ---
+        df_r_org = df_r_raw[[2, 3, 6, 7]].dropna(subset=[2]).copy()
+        df_r_org[2] = df_r_org[2].apply(normalizar_codigo)
+        df_r_org[6] = df_r_org[6].apply(normalizar_codigo)
+        df_r_org[7] = df_r_org[7].fillna("").astype(str).str.strip().str.upper()
+        
+        df_r_org['Resp_String'] = df_r_org.apply(lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" else "SIN RESPONSABLE ASIGNADO", axis=1)
+        map_resp_org = df_r_org.groupby(2)['Resp_String'].apply(lambda x: " / ".join(x.unique())).to_dict()
+        
+        for _, fila in df_r_org.iterrows():
+            if fila[7] != "" and fila[2] != "SIN CÓDIGO":
+                responsables_asignaciones.append({'Responsable': fila[7], 'Tipo': 'Organizador', 'Código': fila[2]})
+        
+        # --- MASTER ---
+        df_r_master = df_r_raw[[4, 5, 6, 7]].dropna(subset=[4]).copy()
+        df_r_master[4] = df_r_master[4].apply(normalizar_codigo)
+        df_r_master[6] = df_r_master[6].apply(normalizar_codigo)
+        df_r_master[7] = df_r_master[7].fillna("").astype(str).str.strip().str.upper()
+        
+        df_r_master['Resp_String'] = df_r_master.apply(
+            lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" and r[7] != "" else ("SIN RESPONSABLE ASIGNADO" if r[6] == "SIN CÓDIGO" else f"[{r[6]}] SIN NOMBRE")
+        , axis=1)
+        
+        map_resp_master = df_r_master.groupby(4)['Resp_String'].apply(
+            lambda x: "  //  ".join([resp for resp in x.unique() if resp != "SIN RESPONSABLE ASIGNADO"]) 
+            if len(x.unique()) > 1 else x.unique()[0]
+        ).to_dict()
+        
+        for _, fila in df_r_master.iterrows():
+            if fila[7] != "" and fila[4] != "SIN CÓDIGO":
+                responsables_asignaciones.append({'Responsable': fila[7], 'Tipo': 'Master', 'Código': fila[4]})
+
+    # --- PROCESAMIENTO Y CRUCES DE VIGENTES ---
+    df_v_limpio = df_v_raw[[0, 1, 3, 4, 5, 6]].copy()
+    df_v_limpio.columns = ['Ramo', 'Prod_Codigo', 'Org_Codigo', 'Org_Nombre', 'Master_Codigo', 'Master_Nombre']
+    
+    df_v_limpio['Ramo'] = df_v_limpio['Ramo'].fillna("").astype(str).str.strip()
+    df_v_limpio['Prod_Codigo'] = df_v_limpio['Prod_Codigo'].apply(normalizar_codigo)
+    df_v_limpio['Org_Codigo'] = df_v_limpio['Org_Codigo'].apply(normalizar_codigo)
+    df_v_limpio['Org_Nombre'] = df_v_limpio['Org_Nombre'].fillna("SIN ASIGNAR").astype(str).str.strip().str.upper()
+    df_v_limpio['Master_Codigo'] = df_v_limpio['Master_Codigo'].apply(normalizar_codigo)
+    df_v_limpio['Master_Nombre'] = df_v_limpio['Master_Nombre'].fillna("SIN ASIGNAR").astype(str).str.strip().str.upper()
+    
+    map_prod_org = df_v_limpio[['Prod_Codigo', 'Org_Codigo']].drop_duplicates(subset=['Prod_Codigo']).set_index('Prod_Codigo')['Org_Codigo'].to_dict()
+    map_prod_master = df_v_limpio[['Prod_Codigo', 'Master_Codigo']].drop_duplicates(subset=['Prod_Codigo']).set_index('Prod_Codigo')['Master_Codigo'].to_dict()
+    
+    map_org_nombres = df_v_limpio[df_v_limpio['Org_Nombre'] != "SIN ASIGNAR"][['Org_Codigo', 'Org_Nombre']].drop_duplicates(subset=['Org_Codigo']).set_index('Org_Codigo')['Org_Nombre'].to_dict()
+    map_master_nombres = df_v_limpio[df_v_limpio['Master_Nombre'] != "SIN ASIGNAR"][['Master_Codigo', 'Master_Nombre']].drop_duplicates(subset=['Master_Codigo']).set_index('Master_Codigo')['Master_Nombre'].to_dict()
+    
+    conteo_vigentes_prod = df_v_limpio['Prod_Codigo'].value_counts().reset_index()
+    conteo_vigentes_prod.columns = ['Código', 'Vigentes']
+
+    df_v_filtrado_basura = df_v_limpio[~df_v_limpio['Org_Codigo'].isin(['CÓDIGO', 'CODIGO', 'ORGANIZADOR', 'SIN CÓDIGO'])]
+    v_totales_org = df_v_filtrado_basura['Org_Codigo'].value_counts().to_dict()
+    
+    df_v_filtrado_basura_m = df_v_limpio[~df_v_limpio['Master_Codigo'].isin(['CÓDIGO', 'CODIGO', 'MASTER', 'SIN CÓDIGO'])]
+    v_totales_master = df_v_filtrado_basura_m['Master_Codigo'].value_counts().to_dict()
+
+    df_rel_org_prod = df_v_filtrado_basura[['Org_Codigo', 'Prod_Codigo']].drop_duplicates()
+    df_rel_master_org = df_v_filtrado_basura_m[['Master_Codigo', 'Org_Codigo']].drop_duplicates()
+
+    # --- MAPAS DE PRODUCTORES ---
+    df_m_p_map = df_m_raw[[11, 12]].copy()
+    df_m_p_map[11] = df_m_p_map[11].apply(normalizar_codigo)
+    df_m_p_map[12] = df_m_p_map[12].fillna("SIN ASIGNAR").astype(str).str.strip().str.upper()
+    map_m_prod = df_m_p_map[df_m_p_map[12] != "SIN ASIGNAR"].drop_duplicates(subset=[11]).set_index(11)[12].to_dict()
+
+    df_j_p_map = df_j_raw[[14, 15]].copy()
+    df_j_p_map[14] = df_j_p_map[14].apply(normalizar_codigo)
+    df_j_p_map[15] = df_j_p_map[15].fillna("SIN ASIGNAR").astype(str).str.strip().str.upper()
+    map_j_prod = df_j_p_map[df_j_p_map[15] != "SIN ASIGNAR"].drop_duplicates(subset=[14]).set_index(14)[15].to_dict()
+
+    # --- PRE-PROCESAMIENTO DE CASOS POR PRODUCTOR ---
+    df_m_prod_neto = df_m_raw[[11]].copy().rename(columns={11: 'Prod_Codigo'})
+    df_m_prod_neto['Prod_Codigo'] = df_m_prod_neto['Prod_Codigo'].apply(normalizar_codigo)
+    df_m_prod_neto['Org_Codigo'] = df_m_prod_neto['Prod_Codigo'].map(map_prod_org).fillna("SIN ORGANIZADOR")
+    df_m_prod_neto['Master_Codigo'] = df_m_prod_neto['Prod_Codigo'].map(map_prod_master).fillna("SIN MASTER")
+    
+    conteo_prod_m = df_m_prod_neto['Prod_Codigo'].value_counts().reset_index(name='Mediaciones').rename(columns={'index': 'Código'})
+    conteo_org_m = df_m_prod_neto['Org_Codigo'].value_counts().reset_index(name='Mediaciones').rename(columns={'index': 'Org_Codigo'})
+    conteo_master_m = df_m_prod_neto['Master_Codigo'].value_counts().reset_index(name='Mediaciones').rename(columns={'index': 'Master_Codigo'})
+
+    df_j_prod_neto = df_j_raw[[14]].copy().rename(columns={14: 'Prod_Codigo'})
+    df_j_prod_neto['Prod_Codigo'] = df_j_prod_neto['Prod_Codigo'].apply(normalizar_codigo)
+    df_j_prod_neto['Org_Codigo'] = df_j_prod_neto['Prod_Codigo'].map(map_prod_org).fillna("SIN ORGANIZADOR")
+    df_j_prod_neto['Master_Codigo'] = df_j_prod_neto['Prod_Codigo'].map(map_prod_master).fillna("SIN MASTER")
+    
+    conteo_prod_j = df_j_prod_neto['Prod_Codigo'].value_counts().reset_index(name='Juicios').rename(columns={'index': 'Código'})
+    conteo_org_j = df_j_prod_neto['Org_Codigo'].value_counts().reset_index(name='Juicios').rename(columns={'index': 'Org_Codigo'})
+    conteo_master_j = df_j_prod_neto['Master_Codigo'].value_counts().reset_index(name='Juicios').rename(columns={'index': 'Master_Codigo'})
+
+    return (df_m_raw, df_j_raw, df_v_raw, map_resp_prod, map_resp_org, map_resp_master, 
+            responsables_asignaciones, df_v_limpio, map_prod_org, map_prod_master, 
+            map_org_nombres, map_master_nombres, conteo_vigentes_prod, v_totales_org, 
+            v_totales_master, df_rel_org_prod, df_rel_master_org, map_m_prod, map_j_prod, 
+            conteo_prod_m, conteo_org_m, conteo_master_m, conteo_prod_j, conteo_org_j, conteo_master_j)
+
+
+# Verificar que los tres archivos base obligatorios estén cargados
 if file_mediaciones is not None and file_juicios is not None and file_vigentes is not None:
     
-    def leer_archivo(file_obj):
-        if file_obj.name.endswith('.csv'):
-            return pd.read_csv(file_obj, header=None)
-        else:
-            return pd.read_excel(file_obj, header=None)
-
-    def normalizar_codigo(val):
-        if pd.isna(val):
-            return "SIN CÓDIGO"
-        val_str = str(val).strip()
-        if val_str.endswith('.0'):
-            val_str = val_str[:-2]
-        val_upper = val_str.upper()
-        return val_upper if val_upper != "" else "SIN CÓDIGO"
-
     try:
-        df_m_raw = leer_archivo(file_mediaciones)
-        df_j_raw = leer_archivo(file_juicios)
-        df_v_raw = leer_archivo(file_vigentes)
-        
-        map_resp_prod = {}
-        map_resp_org = {}
-        map_resp_master = {}
-        responsables_asignaciones = []
-        
-        if file_responsables is not None:
-            df_r_raw = leer_archivo(file_responsables)
-            
-            # --- PRODUCTOR ---
-            df_r_prod = df_r_raw[[0, 1, 6, 7]].dropna(subset=[0]).copy()
-            df_r_prod[0] = df_r_prod[0].apply(normalizar_codigo)
-            df_r_prod[6] = df_r_prod[6].apply(normalizar_codigo)
-            df_r_prod[7] = df_r_prod[7].fillna("").astype(str).str.strip().str.upper()
-            
-            df_r_prod['Resp_String'] = df_r_prod.apply(lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" else "SIN RESPONSABLE ASIGNADO", axis=1)
-            map_resp_prod = df_r_prod.groupby(0)['Resp_String'].apply(lambda x: " / ".join(x.unique())).to_dict()
-            
-            for _, fila in df_r_prod.iterrows():
-                if fila[7] != "" and fila[0] != "SIN CÓDIGO":
-                    responsables_asignaciones.append({'Responsable': fila[7], 'Tipo': 'Productor', 'Código': fila[0]})
-            
-            # --- ORGANIZADOR ---
-            df_r_org = df_r_raw[[2, 3, 6, 7]].dropna(subset=[2]).copy()
-            df_r_org[2] = df_r_org[2].apply(normalizar_codigo)
-            df_r_org[6] = df_r_org[6].apply(normalizar_codigo)
-            df_r_org[7] = df_r_org[7].fillna("").astype(str).str.strip().str.upper()
-            
-            df_r_org['Resp_String'] = df_r_org.apply(lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" else "SIN RESPONSABLE ASIGNADO", axis=1)
-            map_resp_org = df_r_org.groupby(2)['Resp_String'].apply(lambda x: " / ".join(x.unique())).to_dict()
-            
-            for _, fila in df_r_org.iterrows():
-                if fila[7] != "" and fila[2] != "SIN CÓDIGO":
-                    responsables_asignaciones.append({'Responsable': fila[7], 'Tipo': 'Organizador', 'Código': fila[2]})
-            
-            # --- MASTER ---
-            df_r_master = df_r_raw[[4, 5, 6, 7]].dropna(subset=[4]).copy()
-            df_r_master[4] = df_r_master[4].apply(normalizar_codigo)
-            df_r_master[6] = df_r_master[6].apply(normalizar_codigo)
-            df_r_master[7] = df_r_master[7].fillna("").astype(str).str.strip().str.upper()
-            
-            df_r_master['Resp_String'] = df_r_master.apply(
-                lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" and r[7] != "" else ("SIN RESPONSABLE ASIGNADO" if r[6] == "SIN CÓDIGO" else f"[{r[6]}] SIN NOMBRE")
-            , axis=1)
-            
-            map_resp_master = df_r_master.groupby(4)['Resp_String'].apply(
-                lambda x: "  //  ".join([resp for resp in x.unique() if resp != "SIN RESPONSABLE ASIGNADO"]) 
-                if len(x.unique()) > 1 else x.unique()[0]
-            ).to_dict()
-            
-            for _, fila in df_r_master.iterrows():
-                if fila[7] != "" and fila[4] != "SIN CÓDIGO":
-                    responsables_asignaciones.append({'Responsable': fila[7], 'Tipo': 'Master', 'Código': fila[4]})
-
-        # -------------------------------------------------------------------------
-        # PROCESAMIENTO Y CRUCES BASADOS EN EL EXCEL DE VIGENTES
-        # -------------------------------------------------------------------------
-        df_v_limpio = df_v_raw[[0, 1, 3, 4, 5, 6]].copy()
-        df_v_limpio.columns = ['Ramo', 'Prod_Codigo', 'Org_Codigo', 'Org_Nombre', 'Master_Codigo', 'Master_Nombre']
-        
-        df_v_limpio['Ramo'] = df_v_limpio['Ramo'].fillna("").astype(str).str.strip()
-        df_v_limpio['Prod_Codigo'] = df_v_limpio['Prod_Codigo'].apply(normalizar_codigo)
-        df_v_limpio['Org_Codigo'] = df_v_limpio['Org_Codigo'].apply(normalizar_codigo)
-        df_v_limpio['Org_Nombre'] = df_v_limpio['Org_Nombre'].fillna("SIN ASIGNAR").astype(str).str.strip().str.upper()
-        df_v_limpio['Master_Codigo'] = df_v_limpio['Master_Codigo'].apply(normalizar_codigo)
-        df_v_limpio['Master_Nombre'] = df_v_limpio['Master_Nombre'].fillna("SIN ASIGNAR").astype(str).str.strip().str.upper()
-        
-        df_map_prod_to_org = df_v_limpio[['Prod_Codigo', 'Org_Codigo']].drop_duplicates(subset=['Prod_Codigo'])
-        map_prod_org = df_map_prod_to_org.set_index('Prod_Codigo')['Org_Codigo'].to_dict()
-        
-        df_map_prod_to_master = df_v_limpio[['Prod_Codigo', 'Master_Codigo']].drop_duplicates(subset=['Prod_Codigo'])
-        map_prod_master = df_map_prod_to_master.set_index('Prod_Codigo')['Master_Codigo'].to_dict()
-        
-        df_map_org_name = df_v_limpio[df_v_limpio['Org_Nombre'] != "SIN ASIGNAR"][['Org_Codigo', 'Org_Nombre']].drop_duplicates(subset=['Org_Codigo'])
-        map_org_nombres = df_map_org_name.set_index('Org_Codigo')['Org_Nombre'].to_dict()
-        
-        df_map_master_name = df_v_limpio[df_v_limpio['Master_Nombre'] != "SIN ASIGNAR"][['Master_Codigo', 'Master_Nombre']].drop_duplicates(subset=['Master_Codigo'])
-        map_master_nombres = df_map_master_name.set_index('Master_Codigo')['Master_Nombre'].to_dict()
-        
+        # Ejecutar procesamiento cacheado enviando identificadores y objetos de archivo
+        (df_m_raw, df_j_raw, df_v_raw, map_resp_prod, map_resp_org, map_resp_master, 
+         responsables_asignaciones, df_v_limpio, map_prod_org, map_prod_master, 
+         map_org_nombres, map_master_nombres, conteo_vigentes_prod, v_totales_org, 
+         v_totales_master, df_rel_org_prod, df_rel_master_org, map_m_prod, map_j_prod, 
+         conteo_prod_m, conteo_org_m, conteo_master_m, conteo_prod_j, conteo_org_j, conteo_master_j) = procesar_tablero_completo(
+            file_mediaciones.name, file_juicios.name, file_vigentes.name, 
+            file_responsables.name if file_responsables else "no_resp",
+            file_mediaciones, file_juicios, file_vigentes, file_responsables
+         )
+         
+        # Funciones de búsqueda que consumen los mapas cacheados
         def buscar_nombre_organizador(cod):
             return map_org_nombres.get(str(cod).strip().upper(), "SIN ASIGNAR")
             
         def buscar_nombre_master(cod):
             return map_master_nombres.get(str(cod).strip().upper(), "SIN ASIGNAR")
 
-        conteo_vigentes_prod = df_v_limpio['Prod_Codigo'].value_counts().reset_index()
-        conteo_vigentes_prod.columns = ['Código', 'Vigentes']
-
-        df_v_filtrado_basura = df_v_limpio[~df_v_limpio['Org_Codigo'].isin(['CÓDIGO', 'CODIGO', 'ORGANIZADOR', 'SIN CÓDIGO'])]
-        v_totales_org = df_v_filtrado_basura['Org_Codigo'].value_counts().to_dict()
-        
-        df_v_filtrado_basura_m = df_v_limpio[~df_v_limpio['Master_Codigo'].isin(['CÓDIGO', 'CODIGO', 'MASTER', 'SIN CÓDIGO'])]
-        v_totales_master = df_v_filtrado_basura_m['Master_Codigo'].value_counts().to_dict()
-
-        df_rel_org_prod = df_v_filtrado_basura[['Org_Codigo', 'Prod_Codigo']].drop_duplicates()
-        df_rel_master_org = df_v_filtrado_basura_m[['Master_Codigo', 'Org_Codigo']].drop_duplicates()
-
-        # -------------------------------------------------------------------------
-        # CREACIÓN DE MAPAS DE PRODUCTORES (Optimizado con vectorización)
-        # -------------------------------------------------------------------------
-        df_m_p_map = df_m_raw[[11, 12]].copy()
-        df_m_p_map[11] = df_m_p_map[11].apply(normalizar_codigo)
-        df_m_p_map[12] = df_m_p_map[12].fillna("SIN ASIGNAR").astype(str).str.strip().str.upper()
-        map_m_prod = df_m_p_map[df_m_p_map[12] != "SIN ASIGNAR"].drop_duplicates(subset=[11]).set_index(11)[12].to_dict()
-
-        df_j_p_map = df_j_raw[[14, 15]].copy()
-        df_j_p_map[14] = df_j_p_map[14].apply(normalizar_codigo)
-        df_j_p_map[15] = df_j_p_map[15].fillna("SIN ASIGNAR").astype(str).str.strip().str.upper()
-        map_j_prod = df_j_p_map[df_j_p_map[15] != "SIN ASIGNAR"].drop_duplicates(subset=[14]).set_index(14)[15].to_dict()
-
-        # Unimos diccionarios para máxima velocidad sin evaluar condiciones repetidamente
-        map_global_prod = {**map_m_prod, **map_j_prod}
-
         def buscar_nombre_productor(cod):
-            return map_global_prod.get(str(cod).strip().upper(), "SIN ASIGNAR")
+            cod_str = str(cod).strip().upper()
+            if cod_str in map_j_prod: return map_j_prod[cod_str]
+            if cod_str in map_m_prod: return map_m_prod[cod_str]
+            return "SIN ASIGNAR"
 
         # -------------------------------------------------------------------------
-        # PRE-PROCESAMIENTO DE CASOS POR PRODUCTOR Y TRASLADO HACIA ESTRUCTURAS
+        # SOLAPAS PRINCIPALES DEL TABLERO
         # -------------------------------------------------------------------------
-        df_m_prod_neto = df_m_raw[[11]].copy()
-        df_m_prod_neto.columns = ['Prod_Codigo']
-        df_m_prod_neto['Prod_Codigo'] = df_m_prod_neto['Prod_Codigo'].apply(normalizar_codigo)
-        df_m_prod_neto['Org_Codigo'] = df_m_prod_neto['Prod_Codigo'].map(map_prod_org).fillna("SIN ORGANIZADOR")
-        df_m_prod_neto['Master_Codigo'] = df_m_prod_neto['Prod_Codigo'].map(map_prod_master).fillna("SIN MASTER")
-        
-        conteo_prod_m = df_m_prod_neto['Prod_Codigo'].value_counts().reset_index(name='Mediaciones')
-        conteo_prod_m.columns = ['Código', 'Mediaciones']
-        conteo_org_m = df_m_prod_neto['Org_Codigo'].value_counts().reset_index(name='Mediaciones')
-        conteo_org_m.columns = ['Org_Codigo', 'Mediaciones']
-        conteo_master_m = df_m_prod_neto['Master_Codigo'].value_counts().reset_index(name='Mediaciones')
-        conteo_master_m.columns = ['Master_Codigo', 'Mediaciones']
-
-        df_j_prod_neto = df_j_raw[[14]].copy()
-        df_j_prod_neto.columns = ['Prod_Codigo']
-        df_j_prod_neto['Prod_Codigo'] = df_j_prod_neto['Prod_Codigo'].apply(normalizar_codigo)
-        df_j_prod_neto['Org_Codigo'] = df_j_prod_neto['Prod_Codigo'].map(map_prod_org).fillna("SIN ORGANIZADOR")
-        df_j_prod_neto['Master_Codigo'] = df_j_prod_neto['Prod_Codigo'].map(map_prod_master).fillna("SIN MASTER")
-        
-        conteo_prod_j = df_j_prod_neto['Prod_Codigo'].value_counts().reset_index(name='Juicios')
-        conteo_prod_j.columns = ['Código', 'Juicios']
-        conteo_org_j = df_j_prod_neto['Org_Codigo'].value_counts().reset_index(name='Juicios')
-        conteo_org_j.columns = ['Org_Codigo', 'Juicios']
-        conteo_master_j = df_j_prod_neto['Master_Codigo'].value_counts().reset_index(name='Juicios')
-        conteo_master_j.columns = ['Master_Codigo', 'Juicios']
-
-        # Solapas del Tablero
         tabs = st.tabs(["⚖️ Abogados", "👤 Responsables", "💼 Productor", "🏢 Organizador", "👑 Master", "🔍 Coincidencias"])
         
         # =========================================================================
@@ -835,11 +847,7 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
             busqueda_c = st.text_input("🔍 Buscador de Coincidencias:", placeholder="Busque por Código, Productor o Abogado...", key="input_coinc")
             if busqueda_c:
                 bc_upper = busqueda_c.strip().upper()
-                df_mostrar_coinc = df_coinc_total[
-                    df_coinc_total['Código Productor'].str.contains(bc_upper, na=False) | 
-                    df_coinc_total['Nombre Productor'].str.contains(bc_upper, na=False) | 
-                    df_coinc_total['Abogado'].str.contains(bc_upper, na=False)
-                ].reset_index(drop=True)
+                df_mostrar_coinc = df_coinc_total[df_coinc_total['Código Productor'].str.contains(bc_upper, na=False) | df_coinc_total['Nombre Productor'].str.contains(bc_upper, na=False) | df_coinc_total['Abogado'].str.contains(bc_upper, na=False)].reset_index(drop=True)
             else:
                 df_mostrar_coinc = df_coinc_total
                 
