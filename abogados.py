@@ -100,7 +100,7 @@ file_juicios = st.sidebar.file_uploader("Seleccione el archivo de Juicios", type
 file_vigentes = st.sidebar.file_uploader("Seleccione el archivo de VIGENTES", type=["xlsx", "csv"], key="uploader_v")
 file_responsables = st.sidebar.file_uploader("Seleccione el archivo de RESPONSABLES", type=["xlsx", "csv"], key="uploader_r")
 
-# Verificar que los archivos base estén cargados para procesar
+# Verificar que los cuatro archivos estén cargados para procesar
 if file_mediaciones is not None and file_juicios is not None and file_vigentes is not None:
     
     def leer_archivo(file_obj):
@@ -131,6 +131,9 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         map_resp_org = {}
         map_resp_master = {}
         
+        # Listas para guardar las asignaciones directas por responsable para la nueva solapa
+        responsables_asignaciones = []
+        
         if file_responsables is not None:
             df_r_raw = leer_archivo(file_responsables)
             
@@ -140,8 +143,14 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
             df_r_prod[6] = df_r_prod[6].apply(normalizar_codigo)
             df_r_prod[7] = df_r_prod[7].fillna("").astype(str).str.strip().str.upper()
             
+            # Agrupamos para capturar múltiples si existieran
             df_r_prod['Resp_String'] = df_r_prod.apply(lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" else "SIN RESPONSABLE ASIGNADO", axis=1)
             map_resp_prod = df_r_prod.groupby(0)['Resp_String'].apply(lambda x: " / ".join(x.unique())).to_dict()
+            
+            # Guardamos para solapa de control
+            for _, fila in df_r_prod.iterrows():
+                if fila[7] != "" and fila[0] != "SIN CÓDIGO":
+                    responsables_asignaciones.append({'Responsable': fila[7], 'Tipo': 'Productor', 'Código': fila[0]})
             
             # --- ORGANIZADOR ---
             df_r_org = df_r_raw[[2, 3, 6, 7]].dropna(subset=[2]).copy()
@@ -152,23 +161,36 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
             df_r_org['Resp_String'] = df_r_org.apply(lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" else "SIN RESPONSABLE ASIGNADO", axis=1)
             map_resp_org = df_r_org.groupby(2)['Resp_String'].apply(lambda x: " / ".join(x.unique())).to_dict()
             
+            # Guardamos para solapa de control
+            for _, fila in df_r_org.iterrows():
+                if fila[7] != "" and fila[2] != "SIN CÓDIGO":
+                    responsables_asignaciones.append({'Responsable': fila[7], 'Tipo': 'Organizador', 'Código': fila[2]})
+            
             # --- MASTER (Soporta explícitamente 2 o más responsables distintos) ---
             df_r_master = df_r_raw[[4, 5, 6, 7]].dropna(subset=[4]).copy()
             df_r_master[4] = df_r_master[4].apply(normalizar_codigo)
             df_r_master[6] = df_r_master[6].apply(normalizar_codigo)
             df_r_master[7] = df_r_master[7].fillna("").astype(str).str.strip().str.upper()
             
+            # Formateamos la dupla Código-Nombre del responsable
             df_r_master['Resp_String'] = df_r_master.apply(
                 lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" and r[7] != "" else ("SIN RESPONSABLE ASIGNADO" if r[6] == "SIN CÓDIGO" else f"[{r[6]}] SIN NOMBRE")
             , axis=1)
             
+            # Agrupamos por Código de Master (columna 4) y unimos los responsables únicos con un separador visual limpio
             map_resp_master = df_r_master.groupby(4)['Resp_String'].apply(
                 lambda x: "  //  ".join([resp for resp in x.unique() if resp != "SIN RESPONSABLE ASIGNADO"]) 
                 if len(x.unique()) > 1 else x.unique()[0]
             ).to_dict()
+            
+            # Guardamos para solapa de control
+            for _, fila in df_r_master.iterrows():
+                if fila[7] != "" and fila[4] != "SIN CÓDIGO":
+                    responsables_asignaciones.append({'Responsable': fila[7], 'Tipo': 'Master', 'Código': fila[4]})
 
         # -------------------------------------------------------------------------
         # PROCESAMIENTO Y CRUCES BASADOS EN EL EXCEL DE VIGENTES
+        # Col A(0):Ramo, Col B(1):Cód Prod, Col D(3):Cód Org, Col E(4):Nom Org, Col F(5):Cód Master, Col G(6):Nom Master
         # -------------------------------------------------------------------------
         df_v_limpio = df_v_raw[[0, 1, 3, 4, 5, 6]].copy()
         df_v_limpio.columns = ['Ramo', 'Prod_Codigo', 'Org_Codigo', 'Org_Nombre', 'Master_Codigo', 'Master_Nombre']
@@ -180,14 +202,14 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         df_v_limpio['Master_Codigo'] = df_v_limpio['Master_Codigo'].apply(normalizar_codigo)
         df_v_limpio['Master_Nombre'] = df_v_limpio['Master_Nombre'].fillna("SIN ASIGNAR").astype(str).str.strip().str.upper()
         
-        # Maps únicos jerárquicos
+        # 1. Mapas únicos jerárquicos (Prod -> Org y Prod -> Master)
         df_map_prod_to_org = df_v_limpio[['Prod_Codigo', 'Org_Codigo']].drop_duplicates(subset=['Prod_Codigo'])
         map_prod_org = df_map_prod_to_org.set_index('Prod_Codigo')['Org_Codigo'].to_dict()
         
         df_map_prod_to_master = df_v_limpio[['Prod_Codigo', 'Master_Codigo']].drop_duplicates(subset=['Prod_Codigo'])
         map_prod_master = df_map_prod_to_master.set_index('Prod_Codigo')['Master_Codigo'].to_dict()
         
-        # Mapeos de códigos a nombres descriptivos
+        # 2. Mapeos de códigos a nombres descriptivos
         df_map_org_name = df_v_limpio[['Org_Codigo', 'Org_Nombre']].drop_duplicates(subset=['Org_Codigo'])
         df_map_org_name = df_map_org_name[df_map_org_name['Org_Nombre'] != "SIN ASIGNAR"]
         map_org_nombres = df_map_org_name.set_index('Org_Codigo')['Org_Nombre'].to_dict()
@@ -202,7 +224,7 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         def buscar_nombre_master(cod):
             return map_master_nombres.get(str(cod).strip().upper(), "SIN ASIGNAR")
 
-        # Conteos globales de pólizas vigentes por nivel comercial
+        # 3. Conteos globales de pólizas vigentes por nivel comercial
         conteo_vigentes_prod = df_v_limpio['Prod_Codigo'].value_counts().reset_index()
         conteo_vigentes_prod.columns = ['Código', 'Vigentes']
 
@@ -212,7 +234,7 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         df_v_filtrado_basura_m = df_v_limpio[~df_v_limpio['Master_Codigo'].isin(['CÓDIGO', 'CODIGO', 'MASTER', 'SIN CÓDIGO'])]
         v_totales_master = df_v_filtrado_basura_m['Master_Codigo'].value_counts().to_dict()
 
-        # Relaciones de estructuras jerárquicas cruzadas para listados
+        # 4. Relaciones de estructuras jerárquicas cruzadas para listados
         df_rel_org_prod = df_v_filtrado_basura[['Org_Codigo', 'Prod_Codigo']].drop_duplicates()
         df_rel_master_org = df_v_filtrado_basura_m[['Master_Codigo', 'Org_Codigo']].drop_duplicates()
 
@@ -269,9 +291,9 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         conteo_master_j.columns = ['Master_Codigo', 'Juicios']
 
         # -------------------------------------------------------------------------
-        # SOLAPAS PRINCIPALES DEL TABLERO
+        # SOLAPAS PRINCIPALES DEL TABLERO (Ahora son 6)
         # -------------------------------------------------------------------------
-        tabs = st.tabs(["⚖️ Abogados", "💼 Productor", "🏢 Organizador", "👑 Master", "🔍 Coincidencias"])
+        tabs = st.tabs(["⚖️ Abogados", "👤 Responsables", "💼 Productor", "🏢 Organizador", "👑 Master", "🔍 Coincidencias"])
         
         # =========================================================================
         # --- SOLAPA 1: ABOGADOS ---
@@ -350,9 +372,125 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
                 st.plotly_chart(fig_ab, use_container_width=True)
 
         # =========================================================================
-        # --- SOLAPA 2: PRODUCTOR ---
+        # --- SOLAPA 2: RESPONSABLES (NUEVA INCORPORACIÓN COMPLETA) ---
         # =========================================================================
         with tabs[1]:
+            st.markdown("<h3 class='section-header'>👤 Auditoría Analítica por Responsable de Control</h3>", unsafe_allow_html=True)
+            
+            if file_responsables is None or len(responsables_asignaciones) == 0:
+                st.info("ℹ️ Cargue el archivo de Responsables en la barra lateral para procesar la información de control.")
+            else:
+                df_resp_base = pd.DataFrame(responsables_asignaciones)
+                
+                # Obtener diccionario de Vigentes agrupados por Productor y Ramo
+                # Ramo 3 = Auto, Ramo 4 = Moto
+                df_v_prod_ramo = df_v_limpio.groupby(['Prod_Codigo', 'Ramo']).size().unstack(fill_value=0)
+                if '3' not in df_v_prod_ramo.columns: df_v_prod_ramo['3'] = 0
+                if '4' not in df_v_prod_ramo.columns: df_v_prod_ramo['4'] = 0
+                
+                # Mapeos rápidos de Mediaciones y Juicios por productor
+                dict_prod_m = conteo_prod_m.set_index('Código')['Mediaciones'].to_dict()
+                dict_prod_j = conteo_prod_j.set_index('Código')['Juicios'].to_dict()
+                
+                resumen_por_responsable = []
+                
+                # Agrupamos por cada Responsable único
+                for resp, grupo in df_resp_base.groupby('Responsable'):
+                    if resp == "" or resp == "NOMBRE": continue
+                    
+                    # Identificar todos los productores controlados de forma directa o indirecta (vía Org o Master)
+                    lista_prod_controlados = set()
+                    
+                    codigos_del_resp = grupo['Código'].unique()
+                    tipos_del_resp = grupo['Tipo'].tolist()
+                    
+                    for _, fila_r in grupo.iterrows():
+                        tipo_c = fila_r['Tipo']
+                        cod_c = fila_r['Código']
+                        
+                        if tipo_c == 'Productor':
+                            lista_prod_controlados.add(cod_c)
+                        elif tipo_c == 'Organizador':
+                            prods_de_org = df_v_limpio[df_v_limpio['Org_Codigo'] == cod_c]['Prod_Codigo'].unique()
+                            lista_prod_controlados.update(prods_de_org)
+                        elif tipo_c == 'Master':
+                            prods_de_master = df_v_limpio[df_v_limpio['Master_Codigo'] == cod_c]['Prod_Codigo'].unique()
+                            lista_prod_controlados.update(prods_de_master)
+                    
+                    # Remover códigos inválidos si existiesen
+                    lista_prod_controlados = [p for p in lista_prod_controlados if p not in ['SIN CÓDIGO', 'CÓDIGO']]
+                    
+                    # Calcular métricas basadas en los productores consolidados bajo su órbita
+                    vigentes_auto = 0
+                    vigentes_moto = 0
+                    total_m = 0
+                    total_j = 0
+                    
+                    for p_cod in lista_prod_controlados:
+                        if p_cod in df_v_prod_ramo.index:
+                            vigentes_auto += df_v_prod_ramo.loc[p_cod, '3']
+                            vigentes_moto += df_v_prod_ramo.loc[p_cod, '4']
+                        
+                        total_m += dict_prod_m.get(p_cod, 0)
+                        total_j += dict_prod_j.get(p_cod, 0)
+                        
+                    total_vigentes = vigentes_auto + vigentes_moto
+                    total_expedientes = total_m + total_j
+                    
+                    resumen_por_responsable.append({
+                        'Responsable': resp,
+                        'Vigentes Auto (R3)': int(vigentes_auto),
+                        'Vigentes Moto (R4)': int(vigentes_moto),
+                        'Total Vigentes': int(total_vigentes),
+                        'Mediaciones': int(total_m),
+                        'Juicios': int(total_j),
+                        'Total Casos': int(total_expedientes)
+                    })
+                    
+                df_tabla_responsables = pd.DataFrame(resumen_por_responsable)
+                if not df_tabla_responsables.empty:
+                    df_tabla_responsables = df_tabla_responsables.sort_values(by='Total Casos', ascending=False).reset_index(drop=True)
+                    
+                    busqueda_resp = st.text_input("🔍 Filtrar Responsable de Control:", placeholder="Escriba el nombre del analista...")
+                    if busqueda_resp:
+                        df_tabla_responsables = df_tabla_responsables[df_tabla_responsables['Responsable'].str.contains(busqueda_resp.strip().upper(), na=False)].reset_index(drop=True)
+                        
+                    st.write("Seleccione un responsable para abrir las pestañas de sus estructuras controladas por separado:")
+                    evento_resp = st.dataframe(df_tabla_responsables, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="tabla_nueva_responsables")
+                    
+                    filas_resp = evento_resp.get("selection", {}).get("rows", [])
+                    if filas_resp:
+                        resp_sel = df_tabla_responsables.iloc[filas_resp[0]]['Responsable']
+                        st.markdown(f"<h3 class='section-header'>📋 Estructuras Comerciales Asignadas a: {resp_sel}</h3>", unsafe_allow_html=True)
+                        
+                        df_sub_resp = df_resp_base[df_resp_base['Responsable'] == resp_sel]
+                        
+                        c_prod, c_org, c_mast = st.tabs(["💼 Productores Controlados", "🏢 Organizadores Controlados", "👑 Masters Controlados"])
+                        
+                        with c_prod:
+                            cods_p = df_sub_resp[df_sub_resp['Tipo'] == 'Productor']['Código'].unique()
+                            df_p_salida = pd.DataFrame({'Código': cods_p})
+                            df_p_salida['Nombre Productor'] = df_p_salida['Código'].apply(buscar_nombre_productor)
+                            st.dataframe(df_p_salida, use_container_width=True, hide_index=True)
+                            
+                        with c_org:
+                            cods_o = df_sub_resp[df_sub_resp['Tipo'] == 'Organizador']['Código'].unique()
+                            df_o_salida = pd.DataFrame({'Código': cods_o})
+                            df_o_salida['Nombre Organizador'] = df_o_salida['Código'].apply(buscar_nombre_organizador)
+                            st.dataframe(df_o_salida, use_container_width=True, hide_index=True)
+                            
+                        with c_mast:
+                            cods_m = df_sub_resp[df_sub_resp['Tipo'] == 'Master']['Código'].unique()
+                            df_m_salida = pd.DataFrame({'Código': cods_m})
+                            df_m_salida['Nombre Master'] = df_m_salida['Código'].apply(buscar_nombre_master)
+                            st.dataframe(df_m_salida, use_container_width=True, hide_index=True)
+                else:
+                    st.warning("No se pudieron procesar datos con la estructura actual del archivo.")
+
+        # =========================================================================
+        # --- SOLAPA 3: PRODUCTOR ---
+        # =========================================================================
+        with tabs[2]:
             st.markdown("<h3 class='section-header'>💼 Resumen de Carga por Productor</h3>", unsafe_allow_html=True)
             
             df_consolidado_prod = pd.merge(conteo_prod_m, conteo_prod_j, on='Código', how='outer').fillna(0)
@@ -466,9 +604,9 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
                 st.plotly_chart(fig_prod, use_container_width=True)
 
         # =========================================================================
-        # --- SOLAPA 3: ORGANIZADOR ---
+        # --- SOLAPA 4: ORGANIZADOR ---
         # =========================================================================
-        with tabs[2]:
+        with tabs[3]:
             st.markdown("<h3 class='section-header'>🏢 Resumen de Carga por Estructura Organizadora</h3>", unsafe_allow_html=True)
             
             df_consolidado_org = pd.merge(conteo_org_m, conteo_org_j, on='Org_Codigo', how='outer').fillna(0)
@@ -585,9 +723,9 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
                 st.plotly_chart(fig_org, use_container_width=True)
 
         # =========================================================================
-        # --- SOLAPA 4: MASTER ---
+        # --- SOLAPA 5: MASTER ---
         # =========================================================================
-        with tabs[3]:
+        with tabs[4]:
             st.markdown("<h3 class='section-header'>👑 Resumen de Carga por Estructura MASTER</h3>", unsafe_allow_html=True)
             
             df_consolidado_master = pd.merge(conteo_master_m, conteo_master_j, on='Master_Codigo', how='outer').fillna(0)
@@ -707,9 +845,9 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
                 st.plotly_chart(fig_master, use_container_width=True)
 
         # =========================================================================
-        # --- SOLAPA 5: COINCIDENCIAS ---
+        # --- SOLAPA 6: COINCIDENCIAS ---
         # =========================================================================
-        with tabs[4]:
+        with tabs[5]:
             st.markdown("<h3 class='section-header'>📜 Cruce y Coincidencias (Productor + Abogado)</h3>", unsafe_allow_html=True)
             
             df_m_coinc = df_m_raw[[11, 10]].copy()
@@ -740,7 +878,7 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
             busqueda_c = st.text_input("🔍 Buscador de Coincidencias:", placeholder="Busque por Código, Productor o Abogado...", key="input_coinc")
             if busqueda_c:
                 bc_upper = busqueda_c.strip().upper()
-                df_mostrar_coinc = df_coinc_total[df_coinc_total['Código Productor'].str.contains(bc_upper, na=False) | df_coinc_total['Nombre Productor'].str.contains(bc_upper, na=False) | df_coinc_total['Abogado'].str.contains(bc_upper, na=False)]
+                df_mostrar_coinc = df_coinc_total[df_coinc_total['Código Productor'].str.contains(bc_upper, na=False) | df_mostrar_coinc['Nombre Productor'].str.contains(bc_upper, na=False) | df_mostrar_coinc['Abogado'].str.contains(bc_upper, na=False)]
             else:
                 df_mostrar_coinc = df_coinc_total
                 
