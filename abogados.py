@@ -105,8 +105,9 @@ file_responsables = st.sidebar.file_uploader("Seleccione el archivo de RESPONSAB
 # FUNCIONES OPTIMIZADAS CON CACHE (Evitan reprocesar en cada clic)
 # -------------------------------------------------------------------------
 
-def leer_archivo(file_obj):
-    if file_obj.name.endswith('.csv'):
+def leer_archivo(file_obj, file_name):
+    """Lee el archivo basándose en su nombre original, evitando fallos de BytesIO."""
+    if file_name.lower().endswith('.csv'):
         return pd.read_csv(file_obj, header=None)
     else:
         return pd.read_excel(file_obj, header=None)
@@ -124,8 +125,7 @@ def normalizar_codigo(val):
 @st.cache_data
 def procesar_archivo_responsables(file_bytes, file_name):
     """Procesa el archivo de responsables y genera los mapeos jerárquicos."""
-    # Volvemos a instanciar el BytesIO ya que los bytes del archivo están cacheados
-    df_r_raw = leer_archivo(io.BytesIO(file_bytes) if "csv" in file_name else io.BytesIO(file_bytes))
+    df_r_raw = leer_archivo(io.BytesIO(file_bytes), file_name)
     
     map_resp_prod = {}
     map_resp_org = {}
@@ -183,7 +183,7 @@ def procesar_archivo_responsables(file_bytes, file_name):
 @st.cache_data
 def procesar_archivo_vigentes(file_bytes, file_name):
     """Procesa el archivo maestro de Vigentes y genera relaciones comerciales."""
-    df_v_raw = leer_archivo(io.BytesIO(file_bytes))
+    df_v_raw = leer_archivo(io.BytesIO(file_bytes), file_name)
     
     df_v_limpio = df_v_raw[[0, 1, 3, 4, 5, 6]].copy()
     df_v_limpio.columns = ['Ramo', 'Prod_Codigo', 'Org_Codigo', 'Org_Nombre', 'Master_Codigo', 'Master_Nombre']
@@ -222,10 +222,10 @@ def procesar_archivo_vigentes(file_bytes, file_name):
 
 
 @st.cache_data
-def consolidar_expedientes(file_m_bytes, file_j_bytes, map_prod_org, map_prod_master):
+def consolidar_expedientes(file_m_bytes, file_m_name, file_j_bytes, file_j_name, map_prod_org, map_prod_master):
     """Lee y cruza de manera eficiente los dataframes de mediaciones y juicios."""
-    df_m_raw = leer_archivo(io.BytesIO(file_m_bytes))
-    df_j_raw = leer_archivo(io.BytesIO(file_j_bytes))
+    df_m_raw = leer_archivo(io.BytesIO(file_m_bytes), file_m_name)
+    df_j_raw = leer_archivo(io.BytesIO(file_j_bytes), file_j_name)
     
     # Mapas de productores desde Mediaciones y Juicios
     df_m_p_map = df_m_raw[[11, 12]].copy()
@@ -277,8 +277,8 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         
         # 1. Procesar Vigentes (Caché)
         (df_v_limpio, map_prod_org, map_prod_master, map_org_nombres, 
-         map_org_nombres, map_master_nombres, conteo_vigentes_prod, 
-         v_totales_org, v_totales_master, df_rel_org_prod, df_rel_master_org) = procesar_archivo_vigentes(v_bytes, file_vigentes.name)
+         map_master_nombres, conteo_vigentes_prod, v_totales_org, 
+         v_totales_master, df_rel_org_prod, df_rel_master_org) = procesar_archivo_vigentes(v_bytes, file_vigentes.name)
          
         # 2. Procesar Responsables si existe (Caché)
         map_resp_prod, map_resp_org, map_resp_master, responsables_asignaciones = {}, {}, {}, []
@@ -288,11 +288,13 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
             
         # 3. Consolidar Expedientes (Caché)
         (map_total_productores, conteo_prod_m, conteo_org_m, 
-         conteo_master_m, conteo_prod_j, conteo_org_j, conteo_master_j) = consolidar_expedientes(m_bytes, j_bytes, map_prod_org, map_prod_master)
+         conteo_master_m, conteo_prod_j, conteo_org_j, conteo_master_j) = consolidar_expedientes(
+             m_bytes, file_mediaciones.name, j_bytes, file_juicios.name, map_prod_org, map_prod_master
+         )
 
         # Volvemos a instanciar de manera directa solo los DataFrames puros de lectura para los desgloses específicos por fila
-        df_m_raw = leer_archivo(io.BytesIO(m_bytes))
-        df_j_raw = leer_archivo(io.BytesIO(j_bytes))
+        df_m_raw = leer_archivo(io.BytesIO(m_bytes), file_mediaciones.name)
+        df_j_raw = leer_archivo(io.BytesIO(j_bytes), file_juicios.name)
 
         # Helper para búsquedas de nombres en tiempo de ejecución
         def buscar_nombre_productor(cod):
@@ -388,7 +390,7 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
             st.markdown("<h3 class='section-header'>👤 Auditoría Analítica por Responsable de Control</h3>", unsafe_allow_html=True)
             
             if file_responsables is None or len(responsables_asignaciones) == 0:
-                st.info("ℹ nighttime Cargue el archivo de Responsables en la barra lateral para procesar la información de control.")
+                st.info("ℹ️ Cargue el archivo de Responsables en la barra lateral para procesar la información de control.")
             else:
                 df_resp_base = pd.DataFrame(responsables_asignaciones)
                 
@@ -405,7 +407,6 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
                     if resp == "" or resp == "NOMBRE": continue
                     
                     lista_prod_controlados = set()
-                    codigos_del_resp = grupo['Código'].unique()
                     
                     for _, fila_r in grupo.iterrows():
                         tipo_c = fila_r['Tipo']
