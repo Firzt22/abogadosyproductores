@@ -197,8 +197,9 @@ def procesar_tablero_completo(file_m_id, file_j_id, file_v_id, file_r_id, _file_
     map_org_nombres = df_v_limpio[df_v_limpio['Org_Nombre'] != "SIN ASIGNAR"][['Org_Codigo', 'Org_Nombre']].drop_duplicates(subset=['Org_Codigo']).set_index('Org_Codigo')['Org_Nombre'].to_dict()
     map_master_nombres = df_v_limpio[df_v_limpio['Master_Nombre'] != "SIN ASIGNAR"][['Master_Codigo', 'Master_Nombre']].drop_duplicates(subset=['Master_Codigo']).set_index('Master_Codigo')['Master_Nombre'].to_dict()
     
-    conteo_vigentes_prod = df_v_limpio['Prod_Codigo'].value_counts().reset_index()
-    conteo_vigentes_prod.columns = ['Código', 'Vigentes']
+    # Conteo robusto de Vigentes
+    conteo_vigentes_series = df_v_limpio['Prod_Codigo'].value_counts()
+    conteo_vigentes_prod = pd.DataFrame({'Código': conteo_vigentes_series.index, 'Vigentes': conteo_vigentes_series.values})
 
     df_v_filtrado_basura = df_v_limpio[~df_v_limpio['Org_Codigo'].isin(['CÓDIGO', 'CODIGO', 'ORGANIZADOR', 'SIN CÓDIGO'])]
     v_totales_org = df_v_filtrado_basura['Org_Codigo'].value_counts().to_dict()
@@ -226,18 +227,28 @@ def procesar_tablero_completo(file_m_id, file_j_id, file_v_id, file_r_id, _file_
     df_m_prod_neto['Org_Codigo'] = df_m_prod_neto['Prod_Codigo'].map(map_prod_org).fillna("SIN ORGANIZADOR")
     df_m_prod_neto['Master_Codigo'] = df_m_prod_neto['Prod_Codigo'].map(map_prod_master).fillna("SIN MASTER")
     
-    conteo_prod_m = df_m_prod_neto['Prod_Codigo'].value_counts().reset_index(name='Mediaciones').rename(columns={'index': 'Código'})
-    conteo_org_m = df_m_prod_neto['Org_Codigo'].value_counts().reset_index(name='Mediaciones').rename(columns={'index': 'Org_Codigo'})
-    conteo_master_m = df_m_prod_neto['Master_Codigo'].value_counts().reset_index(name='Mediaciones').rename(columns={'index': 'Master_Codigo'})
+    m_counts_p = df_m_prod_neto['Prod_Codigo'].value_counts()
+    conteo_prod_m = pd.DataFrame({'Código': m_counts_p.index, 'Mediaciones': m_counts_p.values})
+    
+    m_counts_o = df_m_prod_neto['Org_Codigo'].value_counts()
+    conteo_org_m = pd.DataFrame({'Org_Codigo': m_counts_o.index, 'Mediaciones': m_counts_o.values})
+    
+    m_counts_ms = df_m_prod_neto['Master_Codigo'].value_counts()
+    conteo_master_m = pd.DataFrame({'Master_Codigo': m_counts_ms.index, 'Mediaciones': m_counts_ms.values})
 
     df_j_prod_neto = df_j_raw[[14]].copy().rename(columns={14: 'Prod_Codigo'})
     df_j_prod_neto['Prod_Codigo'] = df_j_prod_neto['Prod_Codigo'].apply(normalizar_codigo)
     df_j_prod_neto['Org_Codigo'] = df_j_prod_neto['Prod_Codigo'].map(map_prod_org).fillna("SIN ORGANIZADOR")
     df_j_prod_neto['Master_Codigo'] = df_j_prod_neto['Prod_Codigo'].map(map_prod_master).fillna("SIN MASTER")
     
-    conteo_prod_j = df_j_prod_neto['Prod_Codigo'].value_counts().reset_index(name='Juicios').rename(columns={'index': 'Código'})
-    conteo_org_j = df_j_prod_neto['Org_Codigo'].value_counts().reset_index(name='Juicios').rename(columns={'index': 'Org_Codigo'})
-    conteo_master_j = df_j_prod_neto['Master_Codigo'].value_counts().reset_index(name='Juicios').rename(columns={'index': 'Master_Codigo'})
+    j_counts_p = df_j_prod_neto['Prod_Codigo'].value_counts()
+    conteo_prod_j = pd.DataFrame({'Código': j_counts_p.index, 'Juicios': j_counts_p.values})
+    
+    j_counts_o = df_j_prod_neto['Org_Codigo'].value_counts()
+    conteo_org_j = pd.DataFrame({'Org_Codigo': j_counts_o.index, 'Juicios': j_counts_o.values})
+    
+    j_counts_ms = df_j_prod_neto['Master_Codigo'].value_counts()
+    conteo_master_j = pd.DataFrame({'Master_Codigo': j_counts_ms.index, 'Juicios': j_counts_ms.values})
 
     return (df_m_raw, df_j_raw, df_v_raw, map_resp_prod, map_resp_org, map_resp_master, 
             responsables_asignaciones, df_v_limpio, map_prod_org, map_prod_master, 
