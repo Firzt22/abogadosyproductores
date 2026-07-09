@@ -786,26 +786,31 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
                 )
                 fig_master.update_layout(xaxis={'categoryorder':'total descending'}, margin=dict(l=20, r=20, t=10, b=40))
                 st.plotly_chart(fig_master, use_container_width=True)
-
-        # =========================================================================
-        # --- SOLAPA 6: COINCIDENCIAS ---
+# =========================================================================
+        # --- SOLAPA 6: COINCIDENCIAS (CORREGIDA) ---
         # =========================================================================
         with tabs[5]:
             st.markdown("<h3 class='section-header'>📜 Cruce y Coincidencias (Productor + Abogado)</h3>", unsafe_allow_html=True)
             
-            # Agrupamientos directos sin .apply pesados en el bucle principal
+            # 1. Extraer y renombrar explícitamente Mediaciones
             df_m_coinc = df_m_raw[[11, 10]].copy()
             df_m_coinc.columns = ['Código Productor', 'Abogado']
             df_m_coinc['Código Productor'] = df_m_coinc['Código Productor'].apply(lambda val: "SIN CÓDIGO" if pd.isna(val) else str(val).strip().split('.')[0].upper())
             df_m_coinc['Abogado'] = df_m_coinc['Abogado'].fillna("SIN ASIGNAR").astype(str).str.strip().str.upper()
+            
+            # Agrupar asegurando que los nombres de las columnas se mantengan fijos
             df_g_m = df_m_coinc.groupby(['Código Productor', 'Abogado']).size().reset_index(name='Mediaciones')
 
+            # 2. Extraer y renombrar explícitamente Juicios
             df_j_coinc = df_j_raw[[14, 13]].copy()
             df_j_coinc.columns = ['Código Productor', 'Abogado']
             df_j_coinc['Código Productor'] = df_j_coinc['Código Productor'].apply(lambda val: "SIN CÓDIGO" if pd.isna(val) else str(val).strip().split('.')[0].upper())
             df_j_coinc['Abogado'] = df_j_coinc['Abogado'].fillna("SIN ASIGNAR").astype(str).str.strip().str.upper()
+            
+            # Agrupar asegurando que los nombres de las columnas se mantengan fijos
             df_g_j = df_j_coinc.groupby(['Código Productor', 'Abogado']).size().reset_index(name='Juicios')
 
+            # 3. Fusión segura sobre columnas idénticas y mapeo de nombres comerciales
             df_coinc_total = pd.merge(df_g_m, df_g_j, on=['Código Productor', 'Abogado'], how='outer').fillna(0)
             df_coinc_total['Mediaciones'] = df_coinc_total['Mediaciones'].astype(int)
             df_coinc_total['Juicios'] = df_coinc_total['Juicios'].astype(int)
@@ -814,11 +819,13 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
             df_coinc_total['Nombre Productor'] = df_coinc_total['Código Productor'].apply(buscar_nombre_productor)
             df_coinc_total = df_coinc_total[['Código Productor', 'Nombre Productor', 'Abogado', 'Mediaciones', 'Juicios', 'Total Coincidencias']]
             
+            # Filtro de filas de cabecera o datos inválidos
             titulos_filtro = ['CÓDIGO', 'CODIGO', 'PRODUCTOR', 'ABOGADO', 'PROFESIONAL', 'SIN CÓDIGO', 'SIN ASIGNAR', 'DESCONOCIDO']
             df_coinc_total = df_coinc_total[~df_coinc_total['Código Productor'].isin(titulos_filtro)]
             df_coinc_total = df_coinc_total[~df_coinc_total['Abogado'].isin(titulos_filtro)]
             df_coinc_total = df_coinc_total.sort_values(by='Total Coincidencias', ascending=False).reset_index(drop=True)
             
+            # Buscador reactivo
             busqueda_c = st.text_input("🔍 Buscador de Coincidencias:", placeholder="Busque por Código, Productor o Abogado...", key="input_coinc")
             if busqueda_c:
                 bc_upper = busqueda_c.strip().upper()
@@ -838,6 +845,7 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
                 
                 st.markdown(f"<h3 class='section-header'>📂 Expedientes en Coincidencia: [{cod_c_sel}] {nom_p_sel} 🤝 {abog_c_sel}</h3>", unsafe_allow_html=True)
                 
+                # Desglose dinámico usando copias explícitas indexadas
                 df_m_temp_c = df_m_raw.copy()
                 df_m_temp_c[11] = df_m_temp_c[11].apply(lambda val: "SIN CÓDIGO" if pd.isna(val) else str(val).strip().split('.')[0].upper())
                 df_m_temp_c[10] = df_m_temp_c[10].fillna("SIN ASIGNAR").astype(str).str.strip().str.upper()
@@ -856,11 +864,3 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
                 
                 df_detalle_coinc_final = pd.concat([df_det_c_m, df_det_c_j], ignore_index=True)
                 st.dataframe(df_detalle_coinc_final, use_container_width=True, hide_index=True)
-
-    except IndexError:
-        st.error("Error de formato: Verifique que Mediaciones llegue a col M, Juicios a col P y VIGENTES contenga Ramo en col A, Productor en col B, Organizador en col D/E y MASTER en col F/G.")
-    except Exception as e:
-        st.error(f"Ocurrió un error inesperado al procesar los archivos: {e}")
-
-else:
-    st.info("👋 Bienvenido, mdondo. Por favor, cargue los tres archivos base (Mediaciones, Juicios y VIGENTES) en el panel lateral para iniciar el análisis.")
