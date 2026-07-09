@@ -124,8 +124,8 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         df_j_raw = leer_archivo(file_juicios)
         df_v_raw = leer_archivo(file_vigentes)
         
-        # -------------------------------------------------------------------------
-        # PROCESAMIENTO DEL EXCEL DE RESPONSABLES DE CONTROL (Si está cargado)
+       # -------------------------------------------------------------------------
+        # PROCESAMIENTO DEL EXCEL DE RESPONSABLES DE CONTROL (Soporta múltiples responsables)
         # -------------------------------------------------------------------------
         map_resp_prod = {}
         map_resp_org = {}
@@ -134,32 +134,42 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         if file_responsables is not None:
             df_r_raw = leer_archivo(file_responsables)
             
-            # Productor: Col A(0)=Cod, Col B(1)=Nombre, Resp: Col G(6)=Cod, Col H(7)=Nombre
+            # --- PRODUCTOR ---
             df_r_prod = df_r_raw[[0, 1, 6, 7]].dropna(subset=[0]).copy()
             df_r_prod[0] = df_r_prod[0].apply(normalizar_codigo)
             df_r_prod[6] = df_r_prod[6].apply(normalizar_codigo)
             df_r_prod[7] = df_r_prod[7].fillna("").astype(str).str.strip().str.upper()
-            map_resp_prod = df_r_prod.drop_duplicates(subset=[0]).set_index(0).apply(
-                lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" else "SIN RESPONSABLE ASIGNADO", axis=1
-            ).to_dict()
             
-            # Organizador: Col C(2)=Cod, Col D(3)=Nombre, Resp: Col G(6)=Cod, Col H(7)=Nombre
+            # Agrupamos para capturar múltiples si existieran
+            df_r_prod['Resp_String'] = df_r_prod.apply(lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" else "SIN RESPONSABLE ASIGNADO", axis=1)
+            map_resp_prod = df_r_prod.groupby(0)['Resp_String'].apply(lambda x: " / ".join(x.unique())).to_dict()
+            
+            # --- ORGANIZADOR ---
             df_r_org = df_r_raw[[2, 3, 6, 7]].dropna(subset=[2]).copy()
             df_r_org[2] = df_r_org[2].apply(normalizar_codigo)
             df_r_org[6] = df_r_org[6].apply(normalizar_codigo)
             df_r_org[7] = df_r_org[7].fillna("").astype(str).str.strip().str.upper()
-            map_resp_org = df_r_org.drop_duplicates(subset=[2]).set_index(2).apply(
-                lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" else "SIN RESPONSABLE ASIGNADO", axis=1
-            ).to_dict()
             
-            # Master: Col E(4)=Cod, Col F(5)=Nombre, Resp: Col G(6)=Cod, Col H(7)=Nombre
+            df_r_org['Resp_String'] = df_r_org.apply(lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" else "SIN RESPONSABLE ASIGNADO", axis=1)
+            map_resp_org = df_r_org.groupby(2)['Resp_String'].apply(lambda x: " / ".join(x.unique())).to_dict()
+            
+            # --- MASTER (Soporta explícitamente 2 o más responsables distintos) ---
             df_r_master = df_r_raw[[4, 5, 6, 7]].dropna(subset=[4]).copy()
             df_r_master[4] = df_r_master[4].apply(normalizar_codigo)
             df_r_master[6] = df_r_master[6].apply(normalizar_codigo)
             df_r_master[7] = df_r_master[7].fillna("").astype(str).str.strip().str.upper()
-            map_resp_master = df_r_master.drop_duplicates(subset=[4]).set_index(4).apply(
-                lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" else "SIN RESPONSABLE ASIGNADO", axis=1
+            
+            # Formateamos la dupla Código-Nombre del responsable
+            df_r_master['Resp_String'] = df_r_master.apply(
+                lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" and r[7] != "" else ("SIN RESPONSABLE ASIGNADO" if r[6] == "SIN CÓDIGO" else f"[{r[6]}] SIN NOMBRE")
+            , axis=1)
+            
+            # Agrupamos por Código de Master (columna 4) y unimos los responsables únicos con un separador visual limpio
+            map_resp_master = df_r_master.groupby(4)['Resp_String'].apply(
+                lambda x: "  //  ".join([resp for resp in x.unique() if resp != "SIN RESPONSABLE ASIGNADO"]) 
+                if len(x.unique()) > 1 else x.unique()[0]
             ).to_dict()
+     
 
         # -------------------------------------------------------------------------
         # PROCESAMIENTO Y CRUCES BASADOS EN EL EXCEL DE VIGENTES
