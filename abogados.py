@@ -100,7 +100,7 @@ file_juicios = st.sidebar.file_uploader("Seleccione el archivo de Juicios", type
 file_vigentes = st.sidebar.file_uploader("Seleccione el archivo de VIGENTES", type=["xlsx", "csv"], key="uploader_v")
 file_responsables = st.sidebar.file_uploader("Seleccione el archivo de RESPONSABLES", type=["xlsx", "csv"], key="uploader_r")
 
-# Verificar que los cuatro archivos estén cargados para procesar
+# Verificar que los archivos base estén cargados para procesar
 if file_mediaciones is not None and file_juicios is not None and file_vigentes is not None:
     
     def leer_archivo(file_obj):
@@ -124,7 +124,7 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         df_j_raw = leer_archivo(file_juicios)
         df_v_raw = leer_archivo(file_vigentes)
         
-       # -------------------------------------------------------------------------
+        # -------------------------------------------------------------------------
         # PROCESAMIENTO DEL EXCEL DE RESPONSABLES DE CONTROL (Soporta múltiples responsables)
         # -------------------------------------------------------------------------
         map_resp_prod = {}
@@ -140,7 +140,6 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
             df_r_prod[6] = df_r_prod[6].apply(normalizar_codigo)
             df_r_prod[7] = df_r_prod[7].fillna("").astype(str).str.strip().str.upper()
             
-            # Agrupamos para capturar múltiples si existieran
             df_r_prod['Resp_String'] = df_r_prod.apply(lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" else "SIN RESPONSABLE ASIGNADO", axis=1)
             map_resp_prod = df_r_prod.groupby(0)['Resp_String'].apply(lambda x: " / ".join(x.unique())).to_dict()
             
@@ -159,21 +158,17 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
             df_r_master[6] = df_r_master[6].apply(normalizar_codigo)
             df_r_master[7] = df_r_master[7].fillna("").astype(str).str.strip().str.upper()
             
-            # Formateamos la dupla Código-Nombre del responsable
             df_r_master['Resp_String'] = df_r_master.apply(
                 lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" and r[7] != "" else ("SIN RESPONSABLE ASIGNADO" if r[6] == "SIN CÓDIGO" else f"[{r[6]}] SIN NOMBRE")
             , axis=1)
             
-            # Agrupamos por Código de Master (columna 4) y unimos los responsables únicos con un separador visual limpio
             map_resp_master = df_r_master.groupby(4)['Resp_String'].apply(
                 lambda x: "  //  ".join([resp for resp in x.unique() if resp != "SIN RESPONSABLE ASIGNADO"]) 
                 if len(x.unique()) > 1 else x.unique()[0]
             ).to_dict()
-     
 
         # -------------------------------------------------------------------------
         # PROCESAMIENTO Y CRUCES BASADOS EN EL EXCEL DE VIGENTES
-        # Col A(0):Ramo, Col B(1):Cód Prod, Col D(3):Cód Org, Col E(4):Nom Org, Col F(5):Cód Master, Col G(6):Nom Master
         # -------------------------------------------------------------------------
         df_v_limpio = df_v_raw[[0, 1, 3, 4, 5, 6]].copy()
         df_v_limpio.columns = ['Ramo', 'Prod_Codigo', 'Org_Codigo', 'Org_Nombre', 'Master_Codigo', 'Master_Nombre']
@@ -185,14 +180,14 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         df_v_limpio['Master_Codigo'] = df_v_limpio['Master_Codigo'].apply(normalizar_codigo)
         df_v_limpio['Master_Nombre'] = df_v_limpio['Master_Nombre'].fillna("SIN ASIGNAR").astype(str).str.strip().str.upper()
         
-        # 1. Mapas únicos jerárquicos (Prod -> Org y Prod -> Master)
+        # Maps únicos jerárquicos
         df_map_prod_to_org = df_v_limpio[['Prod_Codigo', 'Org_Codigo']].drop_duplicates(subset=['Prod_Codigo'])
         map_prod_org = df_map_prod_to_org.set_index('Prod_Codigo')['Org_Codigo'].to_dict()
         
         df_map_prod_to_master = df_v_limpio[['Prod_Codigo', 'Master_Codigo']].drop_duplicates(subset=['Prod_Codigo'])
         map_prod_master = df_map_prod_to_master.set_index('Prod_Codigo')['Master_Codigo'].to_dict()
         
-        # 2. Mapeos de códigos a nombres descriptivos
+        # Mapeos de códigos a nombres descriptivos
         df_map_org_name = df_v_limpio[['Org_Codigo', 'Org_Nombre']].drop_duplicates(subset=['Org_Codigo'])
         df_map_org_name = df_map_org_name[df_map_org_name['Org_Nombre'] != "SIN ASIGNAR"]
         map_org_nombres = df_map_org_name.set_index('Org_Codigo')['Org_Nombre'].to_dict()
@@ -207,7 +202,7 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         def buscar_nombre_master(cod):
             return map_master_nombres.get(str(cod).strip().upper(), "SIN ASIGNAR")
 
-        # 3. Conteos globales de pólizas vigentes por nivel comercial
+        # Conteos globales de pólizas vigentes por nivel comercial
         conteo_vigentes_prod = df_v_limpio['Prod_Codigo'].value_counts().reset_index()
         conteo_vigentes_prod.columns = ['Código', 'Vigentes']
 
@@ -217,7 +212,7 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         df_v_filtrado_basura_m = df_v_limpio[~df_v_limpio['Master_Codigo'].isin(['CÓDIGO', 'CODIGO', 'MASTER', 'SIN CÓDIGO'])]
         v_totales_master = df_v_filtrado_basura_m['Master_Codigo'].value_counts().to_dict()
 
-        # 4. Relaciones de estructuras jerárquicas cruzadas para listados
+        # Relaciones de estructuras jerárquicas cruzadas para listados
         df_rel_org_prod = df_v_filtrado_basura[['Org_Codigo', 'Prod_Codigo']].drop_duplicates()
         df_rel_master_org = df_v_filtrado_basura_m[['Master_Codigo', 'Org_Codigo']].drop_duplicates()
 
@@ -518,7 +513,7 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
                 # INFORMAR RESPONSABLE ORGANIZADOR
                 if file_responsables is not None:
                     resp_info = map_resp_org.get(org_cod_sel, "SIN RESPONSABLE ASIGNADO")
-                    st.markdown(f"<div class='responsable-box'> Lincoln 👤 <b>Responsable Interno de Control:</b> {resp_info}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='responsable-box'>👤 <b>Responsable Interno de Control:</b> {resp_info}</div>", unsafe_allow_html=True)
                 else:
                     st.warning("⚠️ Cargue el archivo de Responsables en la barra lateral para ver quién controla a este organizador.")
 
