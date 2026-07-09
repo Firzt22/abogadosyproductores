@@ -43,6 +43,14 @@ st.markdown("""
         background-color: #A2244F;
         color: white;
     }
+    /* Estilo personalizado para la info del responsable corporativo */
+    .responsable-box {
+        background-color: #fdf2f4;
+        border: 1px solid #8B1D41;
+        border-radius: 5px;
+        padding: 12px;
+        margin-bottom: 15px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -90,8 +98,9 @@ st.sidebar.markdown("### 📁 Carga de Información")
 file_mediaciones = st.sidebar.file_uploader("Seleccione el archivo de Mediaciones", type=["xlsx", "csv"], key="uploader_m")
 file_juicios = st.sidebar.file_uploader("Seleccione el archivo de Juicios", type=["xlsx", "csv"], key="uploader_j")
 file_vigentes = st.sidebar.file_uploader("Seleccione el archivo de VIGENTES", type=["xlsx", "csv"], key="uploader_v")
+file_responsables = st.sidebar.file_uploader("Seleccione el archivo de RESPONSABLES", type=["xlsx", "csv"], key="uploader_r")
 
-# Verificar que los tres archivos estén cargados para procesar
+# Verificar que los cuatro archivos estén cargados para procesar
 if file_mediaciones is not None and file_juicios is not None and file_vigentes is not None:
     
     def leer_archivo(file_obj):
@@ -115,6 +124,43 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         df_j_raw = leer_archivo(file_juicios)
         df_v_raw = leer_archivo(file_vigentes)
         
+        # -------------------------------------------------------------------------
+        # PROCESAMIENTO DEL EXCEL DE RESPONSABLES DE CONTROL (Si está cargado)
+        # -------------------------------------------------------------------------
+        map_resp_prod = {}
+        map_resp_org = {}
+        map_resp_master = {}
+        
+        if file_responsables is not None:
+            df_r_raw = leer_archivo(file_responsables)
+            
+            # Productor: Col A(0)=Cod, Col B(1)=Nombre, Resp: Col G(6)=Cod, Col H(7)=Nombre
+            df_r_prod = df_r_raw[[0, 1, 6, 7]].dropna(subset=[0]).copy()
+            df_r_prod[0] = df_r_prod[0].apply(normalizar_codigo)
+            df_r_prod[6] = df_r_prod[6].apply(normalizar_codigo)
+            df_r_prod[7] = df_r_prod[7].fillna("").astype(str).str.strip().str.upper()
+            map_resp_prod = df_r_prod.drop_duplicates(subset=[0]).set_index(0).apply(
+                lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" else "SIN RESPONSABLE ASIGNADO", axis=1
+            ).to_dict()
+            
+            # Organizador: Col C(2)=Cod, Col D(3)=Nombre, Resp: Col G(6)=Cod, Col H(7)=Nombre
+            df_r_org = df_r_raw[[2, 3, 6, 7]].dropna(subset=[2]).copy()
+            df_r_org[2] = df_r_org[2].apply(normalizar_codigo)
+            df_r_org[6] = df_r_org[6].apply(normalizar_codigo)
+            df_r_org[7] = df_r_org[7].fillna("").astype(str).str.strip().str.upper()
+            map_resp_org = df_r_org.drop_duplicates(subset=[2]).set_index(2).apply(
+                lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" else "SIN RESPONSABLE ASIGNADO", axis=1
+            ).to_dict()
+            
+            # Master: Col E(4)=Cod, Col F(5)=Nombre, Resp: Col G(6)=Cod, Col H(7)=Nombre
+            df_r_master = df_r_raw[[4, 5, 6, 7]].dropna(subset=[4]).copy()
+            df_r_master[4] = df_r_master[4].apply(normalizar_codigo)
+            df_r_master[6] = df_r_master[6].apply(normalizar_codigo)
+            df_r_master[7] = df_r_master[7].fillna("").astype(str).str.strip().str.upper()
+            map_resp_master = df_r_master.drop_duplicates(subset=[4]).set_index(4).apply(
+                lambda r: f"[{r[6]}] {r[7]}" if r[6] != "SIN CÓDIGO" else "SIN RESPONSABLE ASIGNADO", axis=1
+            ).to_dict()
+
         # -------------------------------------------------------------------------
         # PROCESAMIENTO Y CRUCES BASADOS EN EL EXCEL DE VIGENTES
         # Col A(0):Ramo, Col B(1):Cód Prod, Col D(3):Cód Org, Col E(4):Nom Org, Col F(5):Cód Master, Col G(6):Nom Master
@@ -218,7 +264,7 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         conteo_master_j.columns = ['Master_Codigo', 'Juicios']
 
         # -------------------------------------------------------------------------
-        # SOLAPAS PRINCIPALES DEL TABLERO (Agregamos la pestaña Master)
+        # SOLAPAS PRINCIPALES DEL TABLERO
         # -------------------------------------------------------------------------
         tabs = st.tabs(["⚖️ Abogados", "💼 Productor", "🏢 Organizador", "👑 Master", "🔍 Coincidencias"])
         
@@ -343,6 +389,13 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
                 
                 st.markdown(f"<h3 class='section-header'>📂 Análisis de Cartera Comercial: [{cod_seleccionado}] - {nom_seleccionado}</h3>", unsafe_allow_html=True)
                 
+                # INFORMAR RESPONSABLE PRODUCTOR
+                if file_responsables is not None:
+                    resp_info = map_resp_prod.get(cod_seleccionado, "SIN RESPONSABLE ASIGNADO")
+                    st.markdown(f"<div class='responsable-box'>👤 <b>Responsable Interno de Control:</b> {resp_info}</div>", unsafe_allow_html=True)
+                else:
+                    st.warning("⚠️ Cargue el archivo de Responsables en la barra lateral para ver quién controla a este productor.")
+                
                 sub_tab_expedientes, sub_tab_vigentes = st.tabs(["📋 Historial de Expedientes", "🚗 Detalle de Pólizas Vigentes"])
                 
                 with sub_tab_expedientes:
@@ -452,6 +505,13 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
                 
                 st.markdown(f"<h3 class='section-header'>📂 Análisis Integrado de Estructura: [{org_cod_sel}] {org_nom_sel}</h3>", unsafe_allow_html=True)
                 
+                # INFORMAR RESPONSABLE ORGANIZADOR
+                if file_responsables is not None:
+                    resp_info = map_resp_org.get(org_cod_sel, "SIN RESPONSABLE ASIGNADO")
+                    st.markdown(f"<div class='responsable-box'> Lincoln 👤 <b>Responsable Interno de Control:</b> {resp_info}</div>", unsafe_allow_html=True)
+                else:
+                    st.warning("⚠️ Cargue el archivo de Responsables en la barra lateral para ver quién controla a este organizador.")
+
                 df_prod_asociados = df_rel_org_prod[df_rel_org_prod['Org_Codigo'] == org_cod_sel].copy()
                 df_prod_asociados['Nombre Productor'] = df_prod_asociados['Prod_Codigo'].apply(buscar_nombre_productor)
                 
@@ -520,22 +580,19 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
                 st.plotly_chart(fig_org, use_container_width=True)
 
         # =========================================================================
-        # --- SOLAPA 4: MASTER (¡NUEVA SOLAPA SOLICITADA EN ESPEJO PERFECTO!) ---
+        # --- SOLAPA 4: MASTER ---
         # =========================================================================
         with tabs[3]:
             st.markdown("<h3 class='section-header'>👑 Resumen de Carga por Estructura MASTER</h3>", unsafe_allow_html=True)
             
-            # Consolidación de casos basada en el mapeo directo Prod_Codigo -> Master_Codigo
             df_consolidado_master = pd.merge(conteo_master_m, conteo_master_j, on='Master_Codigo', how='outer').fillna(0)
             df_consolidado_master['Mediaciones'] = df_consolidado_master['Mediaciones'].astype(int)
             df_consolidado_master['Juicios'] = df_consolidado_master['Juicios'].astype(int)
             df_consolidado_master['Total General'] = df_consolidado_master['Mediaciones'] + df_consolidado_master['Juicios']
             
-            # Inyección del nombre del Master y de su total de pólizas vigentes globales
             df_consolidado_master['Nombre Master'] = df_consolidado_master['Master_Codigo'].apply(buscar_nombre_master)
             df_consolidado_master['Vigentes'] = df_consolidado_master['Master_Codigo'].map(v_totales_master).fillna(0).astype(int)
             
-            # Cálculo exacto de incidencia en base al total de vigentes de la macro-estructura
             def calcular_incidencia_master(row):
                 if row['Vigentes'] > 0:
                     return round((row['Total General'] / row['Vigentes']) * 100, 2)
@@ -545,14 +602,12 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
             df_consolidado_master['INCIDENCIA'] = df_consolidado_master.apply(calcular_incidencia_master, axis=1)
             df_consolidado_master['INCIDENCIA (%)'] = df_consolidado_master['INCIDENCIA'].apply(lambda x: f"{x}%")
             
-            # Reestructuración idéntica de las columnas en espejo perfecto a Productores/Organizadores
             df_consolidado_master = df_consolidado_master[['Master_Codigo', 'Nombre Master', 'Vigentes', 'INCIDENCIA (%)', 'Mediaciones', 'Juicios', 'Total General', 'INCIDENCIA']]
             df_consolidado_master.columns = ['Código', 'Nombre Master', 'Vigentes', 'INCIDENCIA (%)', 'Mediaciones', 'Juicios', 'Total General', 'INCIDENCIA']
             
             titulos_basura_master = ['CÓDIGO', 'CODIGO', 'MASTER', 'SIN CÓDIGO', 'SIN MASTER', 'SIN ASIGNAR']
             df_consolidado_master = df_consolidado_master[~df_consolidado_master['Código'].isin(titulos_basura_master)]
             
-            # Ordenamiento mandatorio por nivel de litigiosidad porcentual
             df_consolidado_master = df_consolidado_master.sort_values(by='INCIDENCIA', ascending=False).reset_index(drop=True)
             df_mostrar_tabla_m = df_consolidado_master.drop(columns=['INCIDENCIA'])
             
@@ -570,14 +625,19 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
                 
                 st.markdown(f"<h3 class='section-header'>📂 Análisis Integrado de Macro-Estructura Master: [{master_cod_sel}] {master_nom_sel}</h3>", unsafe_allow_html=True)
                 
-                # REQUISITO NUEVO: Listar qué Organizadores están agrupados bajo este Master
+                # INFORMAR RESPONSABLE MASTER
+                if file_responsables is not None:
+                    resp_info = map_resp_master.get(master_cod_sel, "SIN RESPONSABLE ASIGNADO")
+                    st.markdown(f"<div class='responsable-box'>👤 <b>Responsable Interno de Control:</b> {resp_info}</div>", unsafe_allow_html=True)
+                else:
+                    st.warning("⚠️ Cargue el archivo de Responsables en la barra lateral para ver quién controla a este Master.")
+
                 df_org_asociados = df_rel_master_org[df_rel_master_org['Master_Codigo'] == master_cod_sel].copy()
                 df_org_asociados['Nombre Organizador'] = df_org_asociados['Org_Codigo'].apply(buscar_nombre_organizador)
                 
                 with st.expander("🤝 Ver Organizadores Agrupados bajo esta Estructura Master", expanded=False):
                     st.dataframe(df_org_asociados[['Org_Codigo', 'Nombre Organizador']].rename(columns={'Org_Codigo':'Código Organizador Agrupado', 'Nombre Organizador':'Nombre del Organizador'}), use_container_width=True, hide_index=True)
 
-                # Estructura de Sub-solapas idéntica a la de Productor y Organizador
                 sub_tab_expedientes_m, sub_tab_vigentes_m = st.tabs(["📋 Historial de Expedientes", "🚗 Detalle de Pólizas Vigentes"])
                 
                 with sub_tab_expedientes_m:
@@ -716,4 +776,4 @@ if file_mediaciones is not None and file_juicios is not None and file_vigentes i
         st.error(f"Ocurrió un error inesperado al procesar los archivos: {e}")
 
 else:
-    st.info("👋 Bienvenido, mdondo. Por favor, cargue los tres archivos (Mediaciones, Juicios y VIGENTES) en el panel lateral para iniciar el análisis.")
+    st.info("👋 Bienvenido, mdondo. Por favor, cargue los tres archivos base (Mediaciones, Juicios y VIGENTES) en el panel lateral para iniciar el análisis.")
